@@ -1,0 +1,132 @@
+"""
+app.main
+========
+FastAPI application factory for the Vampter backend.
+
+Startup
+-------
+Run from the project root with the virtual environment activated:
+
+    uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+Or via the config-driven entrypoint:
+
+    python -m app.main
+"""
+
+from __future__ import annotations
+
+import logging
+
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.routers import audit as audit_router
+from config import settings
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Global LlamaIndex embedding binding
+# ---------------------------------------------------------------------------
+# Explicitly configure the global LlamaIndex Settings singleton to use the
+# local BAAI/bge-small-en-v1.5 HuggingFace model.  This MUST run before any
+# node, cache, or graph module is imported so that LlamaSettings.embed_model
+# is always populated — preventing any fallback to the OpenAI embedding API.
+
+from llama_index.core import Settings as LlamaSettings                  # noqa: E402
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding     # noqa: E402
+
+LlamaSettings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
+logger.info(
+    "LlamaIndex global embed_model set → HuggingFaceEmbedding(BAAI/bge-small-en-v1.5)"
+)
+
+# ---------------------------------------------------------------------------
+# Application factory
+# ---------------------------------------------------------------------------
+
+app = FastAPI(
+    title="Vampter — AI Policy Document Auditor",
+    description=(
+        "Asynchronous AI backend for auditing Open Terms Archive software update "
+        "policy documents. Combines Redis semantic caching, LangGraph orchestration, "
+        "Qdrant vector retrieval, Neo4j graph traversal, and Gemini Flash generation "
+        "to deliver structured audit reports."
+    ),
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+)
+
+# ── CORS Middleware ──────────────────────────────────────────────────────────
+# In production, replace allow_origins with your actual frontend origin(s).
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"] if settings.debug else [],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Routers ──────────────────────────────────────────────────────────────────
+app.include_router(
+    audit_router.router,
+    prefix="/api/v1",
+    tags=["Audit"],
+)
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle events
+# ---------------------------------------------------------------------------
+
+
+@app.on_event("startup")
+async def on_startup() -> None:
+    """Pre-warm the LangGraph compiled graph on server startup."""
+    from workflow.graph import build_audit_graph
+    build_audit_graph()
+    logger.info("Vampter backend started — LangGraph graph pre-compiled.")
+
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    logger.info("Vampter backend shutting down.")
+
+
+# ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+
+
+@app.get("/health", tags=["Health"], summary="Liveness probe")
+async def health() -> dict:
+    """Returns 200 OK when the service is running."""
+    return {"status": "ok", "service": "vampter-backend", "version": "1.0.0"}
+
+
+# ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "app.main:app",
+        host=settings.host,
+        port=settings.port,
+        reload=settings.debug,
+        log_level="info",
+    )
