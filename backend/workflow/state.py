@@ -105,6 +105,14 @@ class AuditReport(BaseModel):
     threat_level: ThreatLevel = Field(
         description="Overall threat classification derived from vulnerability_score"
     )
+    category_metrics: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Per-category risk percentages (keyed by category name)",
+    )
+    direct_insights: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Ordered policy insight bullets for frontend (alias for raw_insights)",
+    )
     raw_insights: List[PolicyInsight] = Field(
         default_factory=list,
         description="Ordered list of policy insight bullets",

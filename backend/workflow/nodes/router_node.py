@@ -70,14 +70,16 @@ async def router_node(state: AuditState) -> AuditState:
         else None
     )
 
+    # Build prompt early for potential Groq use in either branch
+    prompt = _ROUTER_PROMPT_TEMPLATE.format(
+        query=query,
+        company_name=company_name,
+        intents=", ".join(intents) if intents else "none",
+    )
+
     route = "vector"  # safe default
 
     if api_key:
-        prompt = _ROUTER_PROMPT_TEMPLATE.format(
-            query=query,
-            company_name=company_name,
-            intents=", ".join(intents) if intents else "none",
-        )
 
         # ── Primary: Gemini ──────────────────────────────────────────────────
         try:
@@ -139,12 +141,46 @@ async def router_node(state: AuditState) -> AuditState:
                 logger.warning("GROQ_API_KEY not set — heuristic router will be used.")
 
     else:
+        # ── Groq Failover: Try Groq before heuristic ─────────────────────────────
+        groq_api_key = (
+            settings.groq_api_key.get_secret_value()
+            if settings.groq_api_key
+            else None
+        )
+        if groq_api_key:
+            try:
+                from groq import Groq  # type: ignore[import]
+
+                groq_client = Groq(api_key=groq_api_key)
+                groq_response = groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=10,
+                    temperature=0.0,
+                )
+                raw = groq_response.choices[0].message.content.strip().lower()
+                if raw in ("vector", "graph"):
+                    route = raw
+                    logger.info("Groq router decision (no Gemini): route='%s'", route)
+                else:
+                    logger.warning(
+                        "Groq router returned unexpected value '%s'; defaulting to 'vector'.", raw
+                    )
+            except Exception as groq_exc:
+                logger.error(
+                    "Groq router also failed (%s: %s) — falling back to heuristic.",
+                    type(groq_exc).__name__,
+                    groq_exc,
+                    exc_info=groq_exc,
+                )
+
         # Heuristic fallback: if query mentions revisions/changes/contradictions → graph
-        graph_keywords = {"revision", "change", "contradict", "differ", "history", "version"}
-        if any(kw in query.lower() for kw in graph_keywords):
-            route = "graph"
+        if route == "vector":
+            graph_keywords = {"revision", "change", "contradict", "differ", "history", "version"}
+            if any(kw in query.lower() for kw in graph_keywords):
+                route = "graph"
         logger.warning(
-            "GEMINI_API_KEY not set — using heuristic router, route='%s'.", route
+            "GEMINI_API_KEY not set — using fallback router, route='%s'.", route
         )
 
     logger.info("Router decision: route='%s'  query='%s'", route, query[:60])

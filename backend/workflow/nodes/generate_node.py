@@ -54,6 +54,25 @@ def _build_mock_report(company_name: str, context: str) -> AuditReport:
         company_name=company_name,
         vulnerability_score=42.5,
         threat_level=ThreatLevel.MEDIUM,
+        category_metrics={
+            "data_privacy": 65.0,
+            "financial": 30.0,
+            "contract_terms": 25.0,
+        },
+        direct_insights=[
+            {
+                "category": "Data Privacy",
+                "text": "Policy scope is broadly defined and may include implicit data collection.",
+            },
+            {
+                "category": "Financial",
+                "text": "90-day retention window post-termination may not meet GDPR Article 5(1)(e).",
+            },
+            {
+                "category": "Contract Terms",
+                "text": "Third-party data sharing clause lacks explicit opt-out mechanism.",
+            },
+        ],
         raw_insights=[
             PolicyInsight(
                 section="§1 Scope of Application",
@@ -89,7 +108,8 @@ async def generate_node(state: AuditState) -> AuditState:
     Generate a validated ``AuditReport`` from compressed policy context.
 
     Uses ``instructor`` to patch the Gemini client and enforce Pydantic
-    schema compliance on the model's output.
+    schema compliance on the model's output. Falls back to Groq if Gemini
+    key is missing or fails, and finally to a mock report.
 
     Parameters
     ----------
@@ -106,19 +126,17 @@ async def generate_node(state: AuditState) -> AuditState:
     query = state.get("query", "")
     context = state.get("compressed_context", "")
 
-    api_key = (
+    gemini_api_key = (
         settings.gemini_api_key.get_secret_value()
         if settings.gemini_api_key
         else None
     )
 
-    if not api_key:
-        logger.warning(
-            "GEMINI_API_KEY not set — returning mock AuditReport for company='%s'.",
-            company_name,
-        )
-        mock = _build_mock_report(company_name, context)
-        return {**state, "report": mock}
+    groq_api_key = (
+        settings.groq_api_key.get_secret_value()
+        if settings.groq_api_key
+        else None
+    )
 
     user_message = (
         f"Company / Platform: {company_name}\n"
@@ -129,52 +147,49 @@ async def generate_node(state: AuditState) -> AuditState:
     )
 
     # ── Primary engine: Gemini via instructor ─────────────────────────────────
-    try:
-        import google.genai as genai  # type: ignore[import]
-        import instructor  # type: ignore[import]
+    if gemini_api_key:
+        try:
+            import google.genai as genai  # type: ignore[import]
+            import instructor  # type: ignore[import]
 
-        raw_client = genai.Client(api_key=api_key)
-        client = instructor.from_gemini(
-            client=raw_client,
-            mode=instructor.Mode.GEMINI_JSON,
-        )
+            raw_client = genai.Client(api_key=gemini_api_key)
+            client = instructor.from_gemini(
+                client=raw_client,
+                mode=instructor.Mode.GEMINI_JSON,
+            )
 
-        report: AuditReport = client.chat.completions.create(
-            model="gemini-2.0-flash",
-            response_model=AuditReport,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_message},
-            ],
-        )
+            report: AuditReport = client.chat.completions.create(
+                model="gemini-2.0-flash",
+                response_model=AuditReport,
+                messages=[
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+            )
 
-        logger.info(
-            "Generation complete (Gemini) — company='%s'  score=%.1f  threat=%s",
-            company_name,
-            report.vulnerability_score,
-            report.threat_level,
-        )
-        return {**state, "report": report}
+            logger.info(
+                "Generation complete (Gemini) — company='%s'  score=%.1f  threat=%s",
+                company_name,
+                report.vulnerability_score,
+                report.threat_level,
+            )
+            return {**state, "report": report}
 
-    except Exception as gemini_exc:
-        logger.warning(
-            "Gemini generation failed (%s: %s) — pivoting to Groq failover.",
-            type(gemini_exc).__name__,
-            gemini_exc,
-            exc_info=gemini_exc,
-        )
+        except Exception as gemini_exc:
+            logger.warning(
+                "Gemini generation failed (%s: %s) — pivoting to Groq failover.",
+                type(gemini_exc).__name__,
+                gemini_exc,
+                exc_info=gemini_exc,
+            )
 
     # ── Failover engine: Groq via instructor ──────────────────────────────────
-    groq_api_key = (
-        settings.groq_api_key.get_secret_value()
-        if settings.groq_api_key
-        else None
-    )
     if groq_api_key:
         try:
-            import instructor  # type: ignore[import]  # noqa: F811
+            import instructor  # type: ignore[import]
             from groq import Groq  # type: ignore[import]
 
+            logger.info("Attempting Groq generation for company='%s'...", company_name)
             groq_client = instructor.from_groq(
                 Groq(api_key=groq_api_key),
                 mode=instructor.Mode.JSON,
@@ -190,7 +205,7 @@ async def generate_node(state: AuditState) -> AuditState:
             )
 
             logger.info(
-                "Generation complete (Groq fallback) — company='%s'  score=%.1f  threat=%s",
+                "Generation complete (Groq) — company='%s'  score=%.1f  threat=%s",
                 company_name,
                 report.vulnerability_score,
                 report.threat_level,
@@ -199,14 +214,15 @@ async def generate_node(state: AuditState) -> AuditState:
 
         except Exception as groq_exc:
             logger.error(
-                "Groq generation fallback also failed (%s: %s) — returning mock AuditReport.",
+                "Groq generation also failed (%s: %s) — returning mock AuditReport.",
                 type(groq_exc).__name__,
                 groq_exc,
                 exc_info=groq_exc,
             )
     else:
-        logger.error(
-            "GROQ_API_KEY not set — both engines exhausted; returning mock AuditReport."
+        logger.warning(
+            "GROQ_API_KEY not set — returning mock AuditReport for company='%s'.",
+            company_name,
         )
 
     # ── Final safety net: deterministic mock ──────────────────────────────────

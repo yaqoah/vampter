@@ -290,7 +290,7 @@ export function ResultsView({ target, result, isLoading, error }: ResultsViewPro
 
   const score = result ? Math.round(result.vulnerability_score) : 84
   const threatLevel = result?.threat_level ?? 'CRITICAL'
-  const categoryEntries = result
+  const categoryEntries = result?.category_metrics
     ? Object.entries(result.category_metrics)
     : []
   const insights: VisualInsight[] = result?.direct_insights ?? []
