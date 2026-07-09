@@ -288,12 +288,18 @@ export function ResultsView({ target, result, isLoading, error }: ResultsViewPro
     return <ErrorBanner message={error} />
   }
 
-  const score = result ? Math.round(result.vulnerability_score) : 84
+  const score = result ? Math.round((result as any).score ?? result.vulnerability_score ?? 84) : 84
   const threatLevel = result?.threat_level ?? 'CRITICAL'
   const categoryEntries = result?.category_metrics
     ? Object.entries(result.category_metrics)
     : []
-  const insights: VisualInsight[] = result?.direct_insights ?? []
+  const rawInsights = result?.direct_insights ?? result?.raw_insights ?? []
+  const insights: VisualInsight[] = Array.isArray(rawInsights)
+    ? rawInsights.map((item: any) => ({
+      category: item.category ?? item.section ?? 'Vulnerability',
+      text: item.text ?? item.insight ?? '',
+    }))
+    : []
 
   return (
     <section aria-label="Audit results" className="mt-8">
@@ -496,8 +502,8 @@ export function ResultsView({ target, result, isLoading, error }: ResultsViewPro
 
       {/* Rows 3 & 4: Deep architectural evidence */}
       <DeepEvidence
-        timeline={result?.greed_trajectory_timeline ?? []}
-        contradictionNodes={result?.contradiction_matrix_nodes ?? []}
+        timeline={result?.greed_trajectory_timeline ?? result?.timeline_trends ?? []}
+        contradictionNodes={result?.contradiction_matrix_nodes ?? result?.graph_nodes ?? []}
         isLoading={isLoading}
       />
     </section>

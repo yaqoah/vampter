@@ -1,10 +1,15 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Search, Zap, Wallet, ScanEye, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-const PRESETS = ['Tabby BNPL', 'Adobe CC', 'Netflix Terms', 'ChatGPT Plus']
+const PRESETS = ['Amazon', 'Google', 'Netflix', 'Meta', 'Zoom']
+
+interface PlatformOption {
+  id: string
+  name: string
+}
 
 const RADARS = [
   {
@@ -27,15 +32,6 @@ const RADARS = [
   },
 ] as const
 
-const SUGGESTIONS = [
-  'Tabby BNPL',
-  'Adobe Creative Cloud',
-  'Netflix',
-  'ChatGPT Plus',
-  'Spotify Premium',
-  'Amazon Prime',
-]
-
 interface CommandInputProps {
   onExecute?: (target: string, concern: string, radars: Record<string, boolean>) => void
 }
@@ -49,13 +45,49 @@ export function CommandInput({ onExecute }: CommandInputProps) {
     stalker: false,
     downgrade: false,
   })
+  const [platforms, setPlatforms] = useState<PlatformOption[]>([])
 
-  const filtered = SUGGESTIONS.filter(
-    (s) => target && s.toLowerCase().includes(target.toLowerCase()) && s.toLowerCase() !== target.toLowerCase(),
+  useEffect(() => {
+    let active = true
+    async function fetchPlatforms() {
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
+        const res = await fetch(`${apiUrl}/api/v1/platforms`)
+        if (res.ok) {
+          const data = await res.json()
+          if (active) {
+            setPlatforms(data || [])
+          }
+        } else {
+          if (active) setPlatforms([])
+        }
+      } catch (err) {
+        console.error('Failed to fetch platforms:', err)
+        if (active) setPlatforms([])
+      }
+    }
+    fetchPlatforms()
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const filtered = platforms.filter(
+    (s) =>
+      target &&
+      (s.name.toLowerCase().includes(target.toLowerCase()) ||
+        s.id.toLowerCase().includes(target.toLowerCase())) &&
+      s.name.toLowerCase() !== target.toLowerCase(),
   )
 
   function toggleRadar(id: string) {
     setRadars((prev) => ({ ...prev, [id]: !prev[id] }))
+  }
+
+  const handleSelect = (val: string) => {
+    setTarget(val)
+    setOpen(false)
+    onExecute?.(val, concern, radars)
   }
 
   return (
@@ -100,17 +132,16 @@ export function CommandInput({ onExecute }: CommandInputProps) {
               {open && filtered.length > 0 && (
                 <ul className="absolute z-20 mt-2 w-full overflow-hidden rounded-xl border border-border/70 bg-popover/95 py-1 shadow-xl backdrop-blur-xl">
                   {filtered.map((s) => (
-                    <li key={s}>
+                    <li key={s.id}>
                       <button
                         type="button"
                         onMouseDown={() => {
-                          setTarget(s)
-                          setOpen(false)
+                          handleSelect(s.name)
                         }}
                         className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-foreground/90 transition-colors hover:bg-primary/10 hover:text-foreground"
                       >
                         <Search className="h-3.5 w-3.5 text-muted-foreground" />
-                        {s}
+                        {s.name}
                       </button>
                     </li>
                   ))}
@@ -127,7 +158,7 @@ export function CommandInput({ onExecute }: CommandInputProps) {
                 <button
                   key={preset}
                   type="button"
-                  onClick={() => setTarget(preset)}
+                  onClick={() => handleSelect(preset)}
                   className={cn(
                     'group rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all duration-200',
                     target === preset
