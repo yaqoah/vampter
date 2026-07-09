@@ -34,17 +34,15 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _CYPHER_TEMPLATE = """
-MATCH (p:Platform)-[:TRACKS_POLICY]->(d:Document)
-      -[:HAS_REVISION_VERSION]->(r:Revision)
-      -[:CONTAINS_CLAUSE]->(c:Clause)
-WHERE toLower(p.name) CONTAINS toLower($company_name)
+MATCH (n:Document)
+WHERE toLower(n.platform) CONTAINS toLower($company_name)
 RETURN
-    p.name        AS platform,
-    d.name        AS document,
-    r.version     AS revision,
-    c.id          AS clause_id,
-    c.text        AS clause_text
-ORDER BY r.version DESC, c.id ASC
+    n.platform    AS platform,
+    n.name        AS document,
+    n.revision    AS revision,
+    n.clause_id   AS clause_id,
+    n.text        AS clause_text
+ORDER BY n.revision DESC, n.clause_id ASC
 LIMIT 50
 """
 

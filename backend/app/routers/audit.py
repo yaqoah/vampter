@@ -173,7 +173,9 @@ async def run_audit(request: AuditRequest) -> AuditReport:
     query_vector = _embed_query(request.query)
 
     # ── Step 2: Semantic cache check ────────────────────────────────────────
-    if query_vector is not None:
+    import os
+    bypass_cache = os.getenv("BYPASS_CACHE", "false").lower() == "true"
+    if query_vector is not None and not bypass_cache:
         cached = await _cache.lookup(
             company_name=request.company_name,
             query_vector=query_vector,
