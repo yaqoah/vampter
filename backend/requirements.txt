@@ -13,6 +13,9 @@ llama-index-vector-stores-qdrant==0.2.12
 llama-index-graph-stores-neo4j==0.2.3
 llama-index-embeddings-huggingface
 
+# Neo4j Python Driver (for schema migration)
+neo4j==5.24.0
+
 # Redis & RedisVL Cache/State Store
 redis==5.0.7
 redisvl==0.1.3

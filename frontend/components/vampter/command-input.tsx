@@ -11,13 +11,13 @@ const RADARS = [
     id: 'wallet',
     label: 'Wallet Bleeding',
     icon: Wallet,
-    hint: 'Hidden fees, auto-renewals & price creep',
+    hint: 'Hidden fees & auto-renewals',
   },
   {
     id: 'stalker',
     label: 'Stalker Mode',
     icon: ScanEye,
-    hint: 'Data harvesting & tracking exposure',
+    hint: 'Data harvesting & tracking',
   },
   {
     id: 'downgrade',

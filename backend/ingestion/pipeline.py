@@ -76,16 +76,15 @@ from llama_index.core.vector_stores.types import BasePydanticVectorStore
 
 from config import AppSettings
 from ingestion.graph_extractor import build_schema_extractor
-from ingestion.api_client import async_fetch_api_documents
+from ingestion.api_client import OpenTermsArchiveClient, OTASettings
 from ingestion.parser import parse_documents_to_nodes
-from ingestion.stores import init_neo4j_store, init_qdrant_store
+from ingestion.stores import init_neo4j_store, init_qdrant_store, run_neo4j_schema_migration
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Result dataclass
 # ---------------------------------------------------------------------------
-
 
 @dataclass
 class IngestionResult:
@@ -96,6 +95,8 @@ class IngestionResult:
 
     documents_loaded: int = 0
     nodes_parsed: int = 0
+    neo4j_rows_inserted: int = 0
+    qdrant_vectors_stored: int = 0
     elapsed_seconds: float = 0.0
     index: Optional[PropertyGraphIndex] = field(default=None, repr=False)
     storage_path: Optional[Path] = None
@@ -106,6 +107,8 @@ class IngestionResult:
             f"IngestionResult("
             f"docs={self.documents_loaded}, "
             f"nodes={self.nodes_parsed}, "
+            f"neo4j_rows={self.neo4j_rows_inserted}, "
+            f"qdrant_vectors={self.qdrant_vectors_stored}, "
             f"elapsed={self.elapsed_seconds:.1f}s, "
             f"storage='{self.storage_path}')"
         )
@@ -114,7 +117,6 @@ class IngestionResult:
 # ---------------------------------------------------------------------------
 # LLM factory
 # ---------------------------------------------------------------------------
-
 
 def _build_llm(settings: AppSettings):
     """
@@ -144,7 +146,7 @@ def _build_llm(settings: AppSettings):
         except ImportError:
             logger.warning(
                 "llama-index-llms-gemini not installed.  "
-                "Attempting OpenAI-compatible endpoint …"
+                "Attempting OpenAI-compatible endpoint ..."
             )
 
     # Fallback: MockLLM — triples won't be real but pipeline is testable.
@@ -161,7 +163,6 @@ def _build_llm(settings: AppSettings):
 # Core pipeline
 # ---------------------------------------------------------------------------
 
-
 async def run_pipeline(
     settings: AppSettings,
     *,
@@ -171,6 +172,7 @@ async def run_pipeline(
     chunk_size: int = 512,
     chunk_overlap: int = 64,
     dry_run: bool = False,
+    run_schema_migration: bool = True,
 ) -> IngestionResult:
     """
     Execute the full asynchronous API ingestion pipeline.
@@ -198,6 +200,8 @@ async def run_pipeline(
         When ``True``, load and parse documents but skip store writes
         and index construction.  Useful for validating the loader without
         running live infrastructure.
+    run_schema_migration:
+        When ``True`` (default), run Neo4j schema migration before indexing.
 
     Returns
     -------
@@ -211,7 +215,19 @@ async def run_pipeline(
     logger.info("=== VAMPTER INGESTION PIPELINE ===")
     logger.info("Step 1/4 - Fetching API documents ...")
 
-    documents = await async_fetch_api_documents(api_url=api_url)
+    # Resolve client base URL from api_url if customized, otherwise defaults.
+    ota_settings = OTASettings()
+    if api_url and "api.example-ota.org" not in api_url:
+        # If a custom URL is provided, strip "/documents" or similar suffixes if present to get the base URL
+        base_url = api_url
+        if base_url.endswith("/documents"):
+            base_url = base_url.removesuffix("/documents")
+        ota_settings = OTASettings(base_url=base_url)
+
+    async with OpenTermsArchiveClient(settings=ota_settings) as client:
+        # Use the hierarchical pipeline pattern with dynamic discovery to eliminate 404 validation loops
+        documents = await client.fetch_all_documents()
+
     result.documents_loaded = len(documents)
 
     if not documents:
@@ -237,6 +253,15 @@ async def run_pipeline(
 
     # ── Step 3: Initialise stores ──────────────────────────────────────────
     logger.info("Step 3/4 - Initialising dual stores ...")
+
+    # Run Neo4j schema migration first
+    if run_schema_migration:
+        logger.info("Running Neo4j schema migration...")
+        run_neo4j_schema_migration(
+            url=settings.neo4j_uri,
+            username=settings.neo4j_user,
+            password=settings.neo4j_password.get_secret_value(),
+        )
 
     qdrant_api_key: Optional[str] = (
         settings.qdrant_api_key.get_secret_value()
@@ -283,6 +308,34 @@ async def run_pipeline(
             show_progress=True,
         ),
     )
+
+    # Log explicit counts for Neo4j and Qdrant
+    # Get vector count from Qdrant
+    try:
+        qdrant_count = vector_store.client.count(
+            collection_name=vector_store.collection_name
+        )
+        result.qdrant_vectors_stored = qdrant_count.count
+        logger.info("QDRANT VECTORS STORED: %d", result.qdrant_vectors_stored)
+    except Exception as exc:
+        logger.warning("Could not get Qdrant vector count: %s", exc)
+        result.qdrant_vectors_stored = len(nodes)  # Fallback to node count
+
+    # Get graph count from Neo4j
+    try:
+        from neo4j import GraphDatabase
+        driver = GraphDatabase.driver(
+            settings.neo4j_uri,
+            auth=(settings.neo4j_user, settings.neo4j_password.get_secret_value())
+        )
+        with driver.session() as session:
+            neo4j_count = session.run("MATCH (n) RETURN count(n) as count").single()
+            result.neo4j_rows_inserted = neo4j_count["count"] if neo4j_count else 0
+            logger.info("NEO4J ROWS INSERTED: %d", result.neo4j_rows_inserted)
+        driver.close()
+    except Exception as exc:
+        logger.warning("Could not get Neo4j row count: %s", exc)
+        result.neo4j_rows_inserted = 0
 
     # Persist the storage context for downstream query / audit engines.
     storage_path = Path(storage_dir).resolve()

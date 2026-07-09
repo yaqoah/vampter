@@ -57,7 +57,6 @@ from ingestion.pipeline import run_pipeline
 # Logging setup
 # ---------------------------------------------------------------------------
 
-
 def _configure_logging(level: str) -> None:
     """Configure root logger with a structured, coloured console handler."""
     numeric_level = getattr(logging, level.upper(), logging.INFO)
@@ -76,7 +75,6 @@ def _configure_logging(level: str) -> None:
 # CLI argument parser
 # ---------------------------------------------------------------------------
 
-
 def _build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m ingestion.run_ingestion",
@@ -90,7 +88,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--api-url", "-a",
-        default="https://api.example-ota.org/v1/documents",
+        default="https://api.opentermsarchive.org/v1",
         metavar="URL",
         help="Target API URL for source JSON payloads.",
     )
@@ -127,6 +125,12 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         help="Parse documents without writing to stores.",
     )
     parser.add_argument(
+        "--skip-schema-migration",
+        action="store_true",
+        default=False,
+        help="Skip Neo4j schema migration (useful if already run).",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -139,7 +143,6 @@ def _build_argument_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
-
 
 async def _main(args: argparse.Namespace) -> int:
     """Async main — returns a shell exit code."""
@@ -156,6 +159,7 @@ async def _main(args: argparse.Namespace) -> int:
     logger.info("  Chunk size    : %d tokens", args.chunk_size)
     logger.info("  Chunk overlap : %d tokens", args.chunk_overlap)
     logger.info("  Dry run       : %s", args.dry_run)
+    logger.info("  Skip schema   : %s", args.skip_schema_migration)
     logger.info(_SEP)
 
     try:
@@ -167,6 +171,7 @@ async def _main(args: argparse.Namespace) -> int:
             chunk_size=args.chunk_size,
             chunk_overlap=args.chunk_overlap,
             dry_run=args.dry_run,
+            run_schema_migration=not args.skip_schema_migration,
         )
     except Exception as exc:  # noqa: BLE001
         logger.error("Pipeline raised an unexpected exception: %s", exc, exc_info=True)
@@ -186,6 +191,8 @@ async def _main(args: argparse.Namespace) -> int:
     logger.info(_SEP)
     logger.info("  Documents loaded : %d", result.documents_loaded)
     logger.info("  Nodes parsed     : %d", result.nodes_parsed)
+    logger.info("  Neo4j rows       : %d", result.neo4j_rows_inserted)
+    logger.info("  Qdrant vectors   : %d", result.qdrant_vectors_stored)
     logger.info("  Elapsed time     : %.2f s", result.elapsed_seconds)
     if result.storage_path:
         logger.info("  Storage persisted: %s", result.storage_path)

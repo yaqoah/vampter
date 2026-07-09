@@ -48,9 +48,58 @@ QDRANT_COLLECTION_NAME: str = "vampter_docs"
 
 
 # ---------------------------------------------------------------------------
-# Qdrant Vector Store
+# Schema Migration
 # ---------------------------------------------------------------------------
 
+def run_neo4j_schema_migration(
+    url: str = "bolt://localhost:7687",
+    username: str = "neo4j",
+    password: str = "vampter_neo4j_password",
+) -> None:
+    """
+    Run Neo4j schema migration to create uniqueness constraints.
+    
+    This function creates the required constraints for the Vampter knowledge graph:
+    - Platform.name must be unique
+    - Document.id must be unique
+    - Revision.id must be unique
+    
+    Parameters
+    ----------
+    url:
+        Bolt URI for the Neo4j server.
+    username:
+        Neo4j authentication username.
+    password:
+        Neo4j authentication password.
+    """
+    from neo4j import GraphDatabase
+    
+    logger.info("Running Neo4j schema migration...")
+    
+    driver = GraphDatabase.driver(url, auth=(username, password))
+    
+    constraints = [
+        "CREATE CONSTRAINT platform_name_unique IF NOT EXISTS FOR (p:Platform) REQUIRE p.name IS UNIQUE",
+        "CREATE CONSTRAINT document_id_unique IF NOT EXISTS FOR (d:Document) REQUIRE d.id IS UNIQUE",
+        "CREATE CONSTRAINT revision_id_unique IF NOT EXISTS FOR (r:Revision) REQUIRE r.id IS UNIQUE",
+    ]
+    
+    with driver.session() as session:
+        for constraint in constraints:
+            try:
+                session.run(constraint)
+                logger.info("Executed: %s", constraint)
+            except Exception as exc:
+                logger.warning("Constraint may already exist or failed: %s - %s", constraint, exc)
+    
+    driver.close()
+    logger.info("Neo4j schema migration completed.")
+
+
+# ---------------------------------------------------------------------------
+# Qdrant Vector Store
+# ---------------------------------------------------------------------------
 
 def init_qdrant_store(
     host: str = "localhost",
@@ -123,7 +172,6 @@ def init_qdrant_store(
 # ---------------------------------------------------------------------------
 # Neo4j Property Graph Store
 # ---------------------------------------------------------------------------
-
 
 def init_neo4j_store(
     url: str = "bolt://localhost:7687",

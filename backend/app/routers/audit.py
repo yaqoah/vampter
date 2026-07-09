@@ -45,6 +45,52 @@ _cache = SemanticCache(threshold=0.92)
 
 
 # ---------------------------------------------------------------------------
+# Platform list / discovery endpoint
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/platforms",
+    summary="Get tracked platforms",
+    description="Fetch a comprehensive index of currently tracked service/platform records."
+)
+async def get_platforms() -> list[dict]:
+    """
+    Fetch a list of tracked platforms by utilizing the refactored
+    OpenTermsArchiveClient fetch_services call dynamically.
+    """
+    from ingestion.api_client import OpenTermsArchiveClient
+    try:
+        async with OpenTermsArchiveClient() as client:
+            services = await client.fetch_services()
+            # Transform to clean format: [{"id": s.get("id"), "name": s.get("name")} for s in services]
+            results = []
+            for service in services:
+                service_id = service.get("id")
+                service_name = service.get("name", service_id)
+                if service_id:
+                    results.append({"id": service_id, "name": service_name})
+            if not results:
+                # Plausible fallback defaults if services index is offline or unreachable
+                results = [
+                    {"id": "amazon", "name": "Amazon"},
+                    {"id": "google", "name": "Google"},
+                    {"id": "netflix", "name": "Netflix"},
+                    {"id": "meta", "name": "Meta"},
+                    {"id": "zoom", "name": "Zoom"}
+                ]
+            return results
+    except Exception as exc:
+        logger.error("Failed to dynamically fetch platforms: %s", exc, exc_info=True)
+        return [
+            {"id": "amazon", "name": "Amazon"},
+            {"id": "google", "name": "Google"},
+            {"id": "netflix", "name": "Netflix"},
+            {"id": "meta", "name": "Meta"},
+            {"id": "zoom", "name": "Zoom"}
+        ]
+
+
+# ---------------------------------------------------------------------------
 # Request schema
 # ---------------------------------------------------------------------------
 
