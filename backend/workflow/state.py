@@ -130,6 +130,26 @@ class AuditReport(BaseModel):
         description="Visual graph edges for frontend rendering",
     )
 
+    # Ingestion telemetry metrics for frontend display
+    raw_word_count: Optional[int] = Field(
+        default=None,
+        description="Raw word count of ingested documents before compression",
+    )
+    compressed_token_count: Optional[int] = Field(
+        default=None,
+        description="Token count after LLMLingua compression",
+    )
+
+    # Alias fields for frontend compatibility
+    greed_trajectory_timeline: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Alias for timeline_trends for Greed Trajectory Engine",
+    )
+    contradiction_matrix_nodes: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Alias for graph_nodes for Contradiction Matrix Web",
+    )
+
 
 # ---------------------------------------------------------------------------
 # AuditState — internal LangGraph TypedDict

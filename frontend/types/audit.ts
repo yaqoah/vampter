@@ -23,10 +23,14 @@ export interface AuditResult {
   direct_insights: VisualInsight[]
   /** Month-by-month policy change frequency for the trajectory chart */
   greed_trajectory_timeline: Array<Record<string, any>>
-  /** Contradiction matrix nodes for the structural fragmentation map */
-  contradiction_matrix_nodes: Array<Record<string, any>>
 
-  // ── Optional passthrough fields from the full AuditReport schema ──────────
+  // ── Ingestion telemetry metrics ──────────────────────────────────
+  /** Raw word count before compression */
+  raw_word_count?: number
+  /** Tokens after LLMLingua compression */
+  compressed_token_count?: number
+
+  // ── Optional passthrough fields from the full AuditReport schema ──────
   company_name?: string
   /** Backend field name alias */
   raw_insights?: Array<{
@@ -41,4 +45,5 @@ export interface AuditResult {
   }>
   graph_nodes?: Array<Record<string, any>>
   graph_edges?: Array<Record<string, any>>
+  contradiction_matrix_nodes?: Array<Record<string, any>>
 }

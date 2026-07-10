@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Search, Zap, Wallet, ScanEye, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -44,7 +44,9 @@ export function CommandInput({ onExecute }: CommandInputProps) {
     downgrade: false,
   })
   const [platforms, setPlatforms] = useState<PlatformOption[]>([])
+  const [filtered, setFiltered] = useState<PlatformOption[]>([])
   const [loadingPlatforms, setLoadingPlatforms] = useState(true)
+  const [searchLoading, setSearchLoading] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -73,14 +75,53 @@ export function CommandInput({ onExecute }: CommandInputProps) {
     }
   }, [])
 
-  const filtered = useMemo(() => {
-    if (!target) return []
-    return platforms.filter(
-      (s) =>
-        s.name.toLowerCase().includes(target.toLowerCase()) ||
-        s.id.toLowerCase().includes(target.toLowerCase())
-    )
-  }, [platforms, target])
+  // Search platforms via backend API with debouncing
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  const searchPlatforms = useCallback(async (query: string) => {
+    if (!query) {
+      setFiltered([])
+      return
+    }
+    setSearchLoading(true)
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
+      const res = await fetch(`${apiUrl}/api/v1/platforms/search?q=${encodeURIComponent(query)}`)
+      if (res.ok) {
+        const data = await res.json()
+        setFiltered(data || [])
+      } else {
+        setFiltered([])
+      }
+    } catch (err) {
+      console.error('Failed to search platforms:', err)
+      setFiltered([])
+    } finally {
+      setSearchLoading(false)
+    }
+  }, [])
+
+  const handleInputChange = (value: string) => {
+    setTarget(value)
+    setOpen(true)
+    
+    // Debounce the search to avoid excessive API calls
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current)
+    }
+    searchTimeoutRef.current = setTimeout(() => {
+      searchPlatforms(value)
+    }, 150)
+  }
 
   function toggleRadar(id: string) {
     setRadars((prev) => ({ ...prev, [id]: !prev[id] }))
@@ -135,8 +176,7 @@ export function CommandInput({ onExecute }: CommandInputProps) {
                 id="target"
                 value={target}
                 onChange={(e) => {
-                  setTarget(e.target.value)
-                  setOpen(true)
+                  handleInputChange(e.target.value)
                 }}
                 onFocus={() => setOpen(true)}
                 onBlur={() => setTimeout(() => setOpen(false), 120)}
@@ -144,22 +184,28 @@ export function CommandInput({ onExecute }: CommandInputProps) {
                 autoComplete="off"
                 className="h-12 w-full rounded-xl border border-border/70 bg-background/60 pl-10 pr-4 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-primary/50 focus:ring-2 focus:ring-ring"
               />
-              {open && filtered.length > 0 && (
+              {open && (filtered.length > 0 || searchLoading) && (
                 <ul className="absolute z-20 mt-2 w-full overflow-hidden rounded-xl border border-border/70 bg-popover/95 py-1 shadow-xl backdrop-blur-xl">
-                  {filtered.map((s) => (
-                    <li key={s.id}>
-                      <button
-                        type="button"
-                        onMouseDown={() => {
-                          handleSelect(s.name)
-                        }}
-                        className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-foreground/90 transition-colors hover:bg-primary/10 hover:text-foreground"
-                      >
-                        <Search className="h-3.5 w-3.5 text-muted-foreground" />
-                        {s.name}
-                      </button>
+                  {searchLoading ? (
+                    <li className="px-4 py-2.5 text-sm text-muted-foreground">
+                      Searching...
                     </li>
-                  ))}
+                  ) : (
+                    filtered.map((option) => (
+                      <li key={option.id}>
+                        <button
+                          type="button"
+                          onMouseDown={() => {
+                            handleSelect(option.name)
+                          }}
+                          className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-foreground/90 transition-colors hover:bg-primary/10 hover:text-foreground"
+                        >
+                          <Search className="h-3.5 w-3.5 text-muted-foreground" />
+                          {option.name}
+                        </button>
+                      </li>
+                    ))
+                  )}
                 </ul>
               )}
             </div>

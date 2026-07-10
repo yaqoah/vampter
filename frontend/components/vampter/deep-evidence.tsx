@@ -33,18 +33,12 @@ interface TimelinePoint {
   [key: string]: unknown
 }
 
-/** Normalise either backend format (month/change_count) or direct (year/severity) */
+/** Normalise either backend format (month/change_count) or direct (year/severity)
+ * Returns empty array if no real data, with a flag to indicate empty state
+ */
 function normaliseTimeline(raw: Array<Record<string, unknown>>): Array<{ year: string; severity: number }> {
   if (!raw || raw.length === 0) {
-    // Fallback static series for demo
-    return [
-      { year: '2021', severity: 22 },
-      { year: '2022', severity: 34 },
-      { year: '2023', severity: 41 },
-      { year: '2024', severity: 58 },
-      { year: '2025', severity: 71 },
-      { year: '2026', severity: 84 },
-    ]
+    return []
   }
 
   return raw.map((pt: TimelinePoint) => {
@@ -181,7 +175,42 @@ function TrajectoryEngine({
   isLoading: boolean
 }) {
   const revisions = normaliseTimeline(timeline)
-  const [active, setActive] = useState(revisions.length - 1)
+  const hasRealData = revisions.length > 0
+  const [active, setActive] = useState(hasRealData ? revisions.length - 1 : 0)
+
+  if (isLoading || !hasRealData) {
+    return (
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Left: timeline + chart - no data state */}
+        <div className="rounded-2xl border border-border/60 bg-card/50 p-5 backdrop-blur-xl">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-danger" />
+            <h3 className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
+              Greed Trajectory Engine
+            </h3>
+          </div>
+          <div className="mt-6 flex items-center justify-center rounded-xl border border-border/50 bg-background/40 p-8">
+            <p className="text-center text-sm text-muted-foreground">
+              {isLoading ? 'Loading trajectory data…' : 'Insufficient regulatory context found for this platform'}
+            </p>
+          </div>
+        </div>
+
+        {/* Right: historical narrative - no data state */}
+        <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-card/50 p-5 backdrop-blur-xl sm:p-6">
+          <div className="flex items-center gap-2">
+            <FileText className="h-4 w-4 text-alert" />
+            <h3 className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
+              Historical Delta Tracking
+            </h3>
+          </div>
+          <p className="mt-5 text-sm text-muted-foreground">
+            Insufficient regulatory context found for this platform.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -194,57 +223,47 @@ function TrajectoryEngine({
           </h3>
         </div>
 
-        {isLoading ? (
-          <div className="mt-6 space-y-3">
-            <Skeleton className="h-5 w-full" />
-            <Skeleton className="h-8 w-full rounded-lg" />
-            <Skeleton className="h-36 w-full rounded-xl" />
+        {/* Timeline slider */}
+        <div className="mt-6">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+              Corporate Revision
+            </span>
+            <span className="font-mono text-xs font-semibold text-danger">
+              v{revisions[active]?.year}
+            </span>
           </div>
-        ) : (
-          <>
-            {/* Timeline slider */}
-            <div className="mt-6">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Corporate Revision
-                </span>
-                <span className="font-mono text-xs font-semibold text-danger">
-                  v{revisions[active]?.year}
-                </span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={revisions.length - 1}
-                value={active}
-                onChange={(e) => setActive(Number(e.target.value))}
-                aria-label="Select document revision year"
-                className="vampter-slider mt-3 w-full"
-              />
-              <div className="mt-2 flex justify-between">
-                {revisions.map((r, i) => (
-                  <button
-                    key={r.year}
-                    onClick={() => setActive(i)}
-                    className={cn(
-                      'font-mono text-[10px] tabular-nums transition-colors',
-                      i === active
-                        ? 'font-bold text-danger'
-                        : 'text-muted-foreground/60 hover:text-muted-foreground',
-                    )}
-                  >
-                    {r.year}
-                  </button>
-                ))}
-              </div>
-            </div>
+          <input
+            type="range"
+            min={0}
+            max={revisions.length - 1}
+            value={active}
+            onChange={(e) => setActive(Number(e.target.value))}
+            aria-label="Select document revision year"
+            className="vampter-slider mt-3 w-full"
+          />
+          <div className="mt-2 flex justify-between">
+            {revisions.map((r, i) => (
+              <button
+                key={r.year}
+                onClick={() => setActive(i)}
+                className={cn(
+                  'font-mono text-[10px] tabular-nums transition-colors',
+                  i === active
+                    ? 'font-bold text-danger'
+                    : 'text-muted-foreground/60 hover:text-muted-foreground',
+                )}
+              >
+                {r.year}
+              </button>
+            ))}
+          </div>
+        </div>
 
-            {/* Trend chart */}
-            <div className="mt-4 rounded-xl border border-border/50 bg-background/40 p-3">
-              <SeverityTrendChart revisions={revisions} activeIndex={active} />
-            </div>
-          </>
-        )}
+        {/* Trend chart */}
+        <div className="mt-4 rounded-xl border border-border/50 bg-background/40 p-3">
+          <SeverityTrendChart revisions={revisions} activeIndex={active} />
+        </div>
       </div>
 
       {/* Right: historical narrative */}
@@ -256,68 +275,36 @@ function TrajectoryEngine({
           </h3>
         </div>
 
-        {isLoading ? (
-          <div className="mt-5 space-y-3">
-            <Skeleton className="h-8 w-full rounded-lg" />
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-5/6" />
-            <Skeleton className="h-4 w-4/5" />
-            <div className="space-y-2 border-l-2 border-muted/40 pl-4">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-full" />
-            </div>
+        <article className="mt-5 space-y-4 text-sm leading-relaxed text-foreground/85">
+          <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2">
+            <Milestone className="h-3.5 w-3.5 shrink-0 text-danger" />
+            <span className="font-mono text-[11px] font-semibold uppercase tracking-wider text-danger">
+              Delta: {revisions[Math.max(0, revisions.length - 2)]?.year ?? '—'} &rarr;{' '}
+              {revisions[revisions.length - 1]?.year ?? '—'} Revision
+            </span>
           </div>
-        ) : (
-          <article className="mt-5 space-y-4 text-sm leading-relaxed text-foreground/85">
-            <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2">
-              <Milestone className="h-3.5 w-3.5 shrink-0 text-danger" />
-              <span className="font-mono text-[11px] font-semibold uppercase tracking-wider text-danger">
-                Delta: {revisions[Math.max(0, revisions.length - 2)]?.year ?? '—'} &rarr;{' '}
-                {revisions[revisions.length - 1]?.year ?? '—'} Revision
-              </span>
-            </div>
 
-            <p className="text-pretty">
-              Between the{' '}
-              <span className="font-semibold text-foreground">
-                {revisions[Math.max(0, revisions.length - 2)]?.year ?? 'prior'}
-              </span>{' '}
-              and{' '}
-              <span className="font-semibold text-foreground">
-                {revisions[revisions.length - 1]?.year ?? 'latest'}
-              </span>{' '}
-              document revisions, this platform silently escalated its predatory severity
-              score from{' '}
-              <span className="rounded bg-danger/15 px-1 font-semibold text-danger">
-                {revisions[Math.max(0, revisions.length - 2)]?.severity ?? 0}
-              </span>{' '}
-              to{' '}
-              <span className="rounded bg-danger/15 px-1 font-semibold text-danger">
-                {revisions[revisions.length - 1]?.severity ?? 0}
-              </span>
-              , compounding user risk across each revision cycle.
-            </p>
-
-            <ul className="space-y-2.5 border-l-2 border-border/60 pl-4">
-              <li className="relative text-muted-foreground">
-                <span className="absolute -left-[21px] top-1.5 h-2 w-2 rounded-full bg-danger" />
-                <span className="font-semibold text-foreground/90">+ Added:</span> Automatic
-                maintenance surcharge clauses, non-negotiable and compounding annually.
-              </li>
-              <li className="relative text-muted-foreground">
-                <span className="absolute -left-[21px] top-1.5 h-2 w-2 rounded-full bg-danger" />
-                <span className="font-semibold text-foreground/90">&minus; Removed:</span>{' '}
-                Consumer right to regional small-claims arbitration venues.
-              </li>
-              <li className="relative text-muted-foreground">
-                <span className="absolute -left-[21px] top-1.5 h-2 w-2 rounded-full bg-alert" />
-                <span className="font-semibold text-foreground/90">~ Altered:</span> Dispute
-                resolution locked to a single out-of-state jurisdiction.
-              </li>
-            </ul>
-          </article>
-        )}
+          <p className="text-pretty">
+            Between the{' '}
+            <span className="font-semibold text-foreground">
+              {revisions[Math.max(0, revisions.length - 2)]?.year ?? 'prior'}
+            </span>{' '}
+            and{' '}
+            <span className="font-semibold text-foreground">
+              {revisions[revisions.length - 1]?.year ?? 'latest'}
+            </span>{' '}
+            document revisions, this platform silently escalated its predatory severity
+            score from{' '}
+            <span className="rounded bg-danger/15 px-1 font-semibold text-danger">
+              {revisions[Math.max(0, revisions.length - 2)]?.severity ?? 0}
+            </span>{' '}
+            to{' '}
+            <span className="rounded bg-danger/15 px-1 font-semibold text-danger">
+              {revisions[revisions.length - 1]?.severity ?? 0}
+            </span>
+            , compounding user risk across each revision cycle.
+          </p>
+        </article>
       </div>
     </div>
   )
@@ -343,23 +330,7 @@ function normaliseNodes(raw: Array<Record<string, unknown>>): Array<{
   mismatch: number
 }> {
   if (!raw || raw.length === 0) {
-    return [
-      {
-        marketing: 'Cancel anytime with 1-click',
-        reality: 'Requires a 30-day prior written notice sent via registered physical post',
-        mismatch: 92,
-      },
-      {
-        marketing: 'No hidden fees, ever',
-        reality: 'A 15% "platform maintenance" surcharge applies at each renewal cycle',
-        mismatch: 88,
-      },
-      {
-        marketing: 'Your data stays private',
-        reality: 'Grants a perpetual license to derived analytics after account deletion',
-        mismatch: 76,
-      },
-    ]
+    return []
   }
   return raw.map((n: ContradictionNode) => ({
     marketing: String(n.marketing ?? n.label ?? 'Interface Promise'),
@@ -510,6 +481,7 @@ function ContradictionMatrix({
   isLoading: boolean
 }) {
   const rows = normaliseNodes(nodes)
+  const hasRealData = rows.length > 0
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -524,14 +496,22 @@ function ContradictionMatrix({
         <div className="mt-4 rounded-xl border border-border/50 bg-background/40 p-2">
           {isLoading ? (
             <Skeleton className="h-48 w-full rounded-xl" />
-          ) : (
+          ) : hasRealData ? (
             <ContradictionGraph />
+          ) : (
+            <div className="flex h-48 items-center justify-center">
+              <p className="text-center text-sm text-muted-foreground">
+                Insufficient regulatory context found for this platform
+              </p>
+            </div>
           )}
         </div>
-        <p className="mt-3 text-center text-xs text-muted-foreground">
-          Interface promise linked to a conflicting clause buried{' '}
-          <span className="text-danger">4 layers deep</span>
-        </p>
+        {hasRealData && (
+          <p className="mt-3 text-center text-xs text-muted-foreground">
+            Interface promise linked to a conflicting clause buried{' '}
+            <span className="text-danger">4 layers deep</span>
+          </p>
+        )}
       </div>
 
       {/* Right: comparison table */}
@@ -567,7 +547,8 @@ function ContradictionMatrix({
                     </div>
                   </div>
                 ))
-              : rows.map((row) => {
+              : rows.length > 0
+              ? rows.map((row) => {
                   const color = mismatchColor(row.mismatch)
                   return (
                     <div
@@ -596,7 +577,15 @@ function ContradictionMatrix({
                       </div>
                     </div>
                   )
-                })}
+                })
+              : [
+                  <div
+                    key="no-data"
+                    className="col-span-3 px-3 py-8 text-center text-sm text-muted-foreground"
+                  >
+                    Insufficient regulatory context found for this platform
+                  </div>,
+                ]}
           </div>
         </div>
         <p className="mt-3 font-mono text-[10px] text-muted-foreground">

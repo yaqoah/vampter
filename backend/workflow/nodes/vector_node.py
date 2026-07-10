@@ -75,17 +75,19 @@ async def vector_node(state: AuditState) -> AuditState:
                 ]
             )
 
-        results = await client.search(
+        # Use query_points for modern Qdrant client API (v1.7.0+)
+        query_response = await client.query_points(
             collection_name=_COLLECTION_NAME,
-            query_vector=query_embedding,
+            query=query_embedding,
             limit=_TOP_K,
             query_filter=search_filter,
+            with_payload=True,
         )
 
         passages = [
-            hit.payload.get("text", "") or hit.payload.get("_node_content", "")
-            for hit in results
-            if hit.payload
+            point.payload.get("text", "") or point.payload.get("_node_content", "")
+            for point in query_response.points
+            if point.payload
         ]
 
         logger.info(

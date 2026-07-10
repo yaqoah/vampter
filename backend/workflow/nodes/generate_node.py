@@ -1,19 +1,18 @@
 """
 workflow.nodes.generate_node
 ============================
-Structured generation node — Gemini Flash + instructor.
+Structured generation node — Gemini Flash native SDK.
 
 Responsibility
 --------------
-Calls Gemini Flash via ``google.genai`` and wraps it with the
-``instructor`` library to force deterministic Pydantic serialisation
-directly into the ``AuditReport`` schema.
+Calls Gemini Flash via ``google-genai`` SDK with native structured output
+configuration to generate validated ``AuditReport`` schema directly.
 
 Flow
 ----
 1. Build a structured system + user prompt from ``compressed_context``.
-2. Initialise an ``instructor``-patched Gemini client.
-3. Call ``client.chat.completions.create(response_model=AuditReport, ...)``.
+2. Use native Gemini ``response_schema`` parameter with Pydantic model.
+3. Parse JSON response and validate into ``AuditReport`` instance.
 4. Write the validated ``AuditReport`` instance to ``state["report"]``.
 
 Requirements
@@ -24,6 +23,7 @@ If no provider is available, an HTTPException is raised.
 
 from __future__ import annotations
 
+import json
 import logging
 from fastapi import HTTPException, status
 
@@ -52,9 +52,8 @@ async def generate_node(state: AuditState) -> AuditState:
     """
     Generate a validated ``AuditReport`` from compressed policy context.
 
-    Uses ``instructor`` to patch the Gemini client and enforce Pydantic
-    schema compliance on the model's output. Falls back to Groq if Gemini
-    key is missing or fails.
+    Uses native Gemini SDK with ``response_schema`` for structured JSON output.
+    Falls back to Groq if Gemini key is missing or fails.
 
     Parameters
     ----------
@@ -91,34 +90,40 @@ async def generate_node(state: AuditState) -> AuditState:
         "Generate the structured AuditReport based solely on the context above."
     )
 
-    # ── Primary engine: Gemini via instructor ─────────────────────────────────
+    # ── Primary engine: Gemini via native SDK ─────────────────────────────────
     if gemini_api_key:
         try:
-            import google.genai as genai  # type: ignore[import]
-            import instructor  # type: ignore[import]
+            from google import genai
+            from google.genai import types
 
-            raw_client = genai.Client(api_key=gemini_api_key)
-            client = instructor.from_gemini(
-                client=raw_client,
-                mode=instructor.Mode.GEMINI_JSON,
+            client = genai.Client(api_key=gemini_api_key)
+
+            # Use native Gemini SDK with Pydantic model as response_schema
+            # The SDK accepts the model class directly for structured output
+            response = client.models.generate_content(
+                model=settings.llm_model or "gemini-1.5-flash",
+                contents=user_message,
+                config=types.GenerateContentConfig(
+                    system_instruction=_SYSTEM_PROMPT,
+                    response_mime_type="application/json",
+                    response_schema=AuditReport,
+                ),
             )
 
-            report: AuditReport = client.chat.completions.create(
-                model="gemini-2.0-flash",
-                response_model=AuditReport,
-                messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": user_message},
-                ],
-            )
+            # Parse the JSON response and validate into AuditReport
+            if response and response.text:
+                json_data = json.loads(response.text)
+                report = AuditReport(**json_data)
 
-            logger.info(
-                "Generation complete (Gemini) — company='%s'  score=%.1f  threat=%s",
-                company_name,
-                report.vulnerability_score,
-                report.threat_level,
-            )
-            return {**state, "report": report}
+                logger.info(
+                    "Generation complete (Gemini) — company='%s'  score=%.1f  threat=%s",
+                    company_name,
+                    report.vulnerability_score,
+                    report.threat_level,
+                )
+                return {**state, "report": report}
+            else:
+                raise ValueError("Empty response from Gemini model")
 
         except Exception as gemini_exc:
             logger.warning(
@@ -131,8 +136,8 @@ async def generate_node(state: AuditState) -> AuditState:
     # ── Failover engine: Groq via instructor ──────────────────────────────────
     if groq_api_key:
         try:
-            import instructor  # type: ignore[import]
-            from groq import Groq  # type: ignore[import]
+            import instructor
+            from groq import Groq
 
             logger.info("Attempting Groq generation for company='%s'...", company_name)
             groq_client = instructor.from_groq(

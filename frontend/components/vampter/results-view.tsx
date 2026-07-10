@@ -359,8 +359,12 @@ export function ResultsView({ target, result, isLoading, error }: ResultsViewPro
               Category Health Matrix
             </h3>
           </div>
-          {isLoading || categoryEntries.length === 0 ? (
+          {isLoading ? (
             <CategoryMatrixSkeleton />
+          ) : categoryEntries.length === 0 ? (
+            <p className="mt-6 text-sm text-muted-foreground">
+              Insufficient regulatory context found for this platform.
+            </p>
           ) : (
             <div className="mt-6 flex flex-col gap-5">
               {categoryEntries.map(([key, value]) => {
@@ -381,7 +385,7 @@ export function ResultsView({ target, result, isLoading, error }: ResultsViewPro
           )}
         </div>
 
-        {/* Card C — Ingestion shredder (static pipeline telemetry) */}
+        {/* Card C — Ingestion shredder (pipeline telemetry) */}
         <div className="rounded-2xl border border-border/60 bg-card/50 p-5 backdrop-blur-xl">
           <div className="flex items-center gap-2">
             <Cpu className="h-4 w-4 text-primary" />
@@ -397,11 +401,11 @@ export function ResultsView({ target, result, isLoading, error }: ResultsViewPro
               <Skeleton className="mx-auto h-3.5 w-3.5" />
               <Skeleton className="h-10 w-full rounded-lg" />
             </div>
-          ) : (
+          ) : result?.raw_word_count || result?.compressed_token_count ? (
             <div className="mt-6 flex flex-col gap-2.5">
               <ShredderRow
                 label="Raw Data Ingested"
-                value="14,200 w"
+                value={result.raw_word_count ? `${result.raw_word_count.toLocaleString()} w` : '—'}
                 color="var(--color-foreground)"
                 spark
               />
@@ -410,7 +414,9 @@ export function ResultsView({ target, result, isLoading, error }: ResultsViewPro
               </div>
               <ShredderRow
                 label="LLMLingua Compression"
-                value="-76%"
+                value={result.raw_word_count && result.compressed_token_count
+                  ? `-${Math.round(((result.raw_word_count - result.compressed_token_count) / result.raw_word_count) * 100)}%`
+                  : '—'}
                 color="var(--color-primary)"
               />
               <div className="flex justify-center py-0.5">
@@ -418,16 +424,22 @@ export function ResultsView({ target, result, isLoading, error }: ResultsViewPro
               </div>
               <ShredderRow
                 label="Salient Tokens Parsed"
-                value="3,400 t"
+                value={result.compressed_token_count ? `${result.compressed_token_count.toLocaleString()} t` : '—'}
                 color="var(--color-alert)"
                 spark
               />
             </div>
+          ) : (
+            <p className="mt-6 text-sm text-muted-foreground">
+              Insufficient regulatory context found for this platform.
+            </p>
           )}
           <div className="mt-4 rounded-lg border border-border/50 bg-background/60 px-3 py-2 font-mono text-[10px] leading-relaxed text-muted-foreground">
             <span className="text-primary">$</span> pipeline: parse → compress →{' '}
             <span className="text-alert">rank_salience</span>{' '}
-            <span className="text-muted-foreground/60">// 3.4k tokens @ 99.2% recall</span>
+            {result?.compressed_token_count && (
+              <span className="text-muted-foreground/60">// {result.compressed_token_count.toLocaleString()} tokens processed</span>
+            )}
           </div>
         </div>
       </div>

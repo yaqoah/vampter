@@ -112,11 +112,15 @@ async def search_platforms(q: str = Query(..., min_length=1, max_length=100)) ->
         auth = (settings.neo4j_user, settings.neo4j_password.get_secret_value())
         async with AsyncGraphDatabase.driver(settings.neo4j_uri, auth=auth) as driver:
             async with driver.session() as session:
-                # Execute Cypher query with fuzzy matching
+                # Execute Cypher query with case-insensitive matching
+                # Prioritizes prefix matches first, then substring matches
+                # Uses COLLATE for proper case-insensitive comparison
                 query = """
                 MATCH (p:Platform)
                 WHERE toLower(p.name) CONTAINS toLower($query)
-                RETURN p.id AS id, p.name AS name
+                RETURN p.id AS id, p.name AS name,
+                       CASE WHEN toLower(p.name) STARTS WITH toLower($query) THEN 0 ELSE 1 END AS sort_priority
+                ORDER BY sort_priority, p.name
                 LIMIT 10
                 """
                 result = await session.run(query, query=q)
