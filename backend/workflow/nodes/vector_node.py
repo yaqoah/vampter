@@ -85,7 +85,7 @@ async def vector_node(state: AuditState) -> AuditState:
         )
 
         passages = [
-            point.payload.get("text", "") or point.payload.get("_node_content", "")
+            point.payload.get("text", "")
             for point in query_response.points
             if point.payload
         ]

@@ -196,7 +196,9 @@ export function CommandInput({ onExecute }: CommandInputProps) {
                         <button
                           type="button"
                           onMouseDown={() => {
-                            handleSelect(option.name)
+                            // Send the exact string key (id) as the company identifier
+                            // to match the backend's platform/company lookup
+                            handleSelect(option.id)
                           }}
                           className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-foreground/90 transition-colors hover:bg-primary/10 hover:text-foreground"
                         >
@@ -220,10 +222,10 @@ export function CommandInput({ onExecute }: CommandInputProps) {
                   <button
                     key={platform.id}
                     type="button"
-                    onClick={() => handleQuickSelect(platform.name)}
+                    onClick={() => handleQuickSelect(platform.id)}
                     className={cn(
                       'group rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all duration-200',
-                      target === platform.name
+                      target === platform.id
                         ? 'border-primary/60 bg-primary/15 text-primary shadow-[0_0_18px_-6px_var(--color-primary)]'
                         : 'border-border/70 bg-background/40 text-muted-foreground hover:border-primary/40 hover:text-foreground hover:shadow-[0_0_18px_-8px_var(--color-primary)]',
                     )}

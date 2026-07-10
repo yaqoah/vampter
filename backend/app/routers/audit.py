@@ -164,6 +164,10 @@ class AuditRequest(BaseModel):
         default_factory=list,
         description="Active audit intent toggles e.g. ['policy_change', 'vulnerability_scan'].",
     )
+    bypass_cache: Optional[bool] = Field(
+        default=None,
+        description="If true, bypass semantic cache and force fresh pipeline execution. Alternatively, set DEV_BYPASS_CACHE=true environment variable.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +187,15 @@ def _embed_query(query: str) -> Optional[List[float]]:
     except Exception as exc:
         logger.warning("Embedding failed: %s — cache will be bypassed.", exc)
         return None
+
+
+def _build_cache_key_text(company_name: str, query: str, intents: List[str]) -> str:
+    """
+    Build a composite text string for cache embedding that includes context.
+    This prevents collisions between queries for different companies/intents.
+    """
+    intents_str = ','.join(intents) if intents else ''
+    return f"Company: {company_name} | Query: {query} | Intents: {intents_str}"
 
 
 # ---------------------------------------------------------------------------
@@ -221,12 +234,25 @@ async def run_audit(request: AuditRequest) -> AuditReport:
         request.intents,
     )
 
-    # ── Step 1: Embed query for cache lookup ────────────────────────────────
-    query_vector = _embed_query(request.query)
+    # ── DEVELOPMENT BYPASS: Hardcoded override for testing ─────────────────────
+    BYPASS_CACHE = True
+    if BYPASS_CACHE:
+        logger.warning(
+            "DEV BYPASS ACTIVE — Cache will be skipped for company='%s'.",
+            request.company_name
+        )
+
+    # ── Step 1: Embed query for cache lookup ───────────────────────────────────
+    # Build composite cache key text to prevent cross-company collisions
+    cache_key_text = _build_cache_key_text(
+        request.company_name,
+        request.query,
+        request.intents
+    )
+    query_vector = _embed_query(cache_key_text)
 
     # ── Step 2: Semantic cache check ────────────────────────────────────────
-    bypass_cache = os.getenv("BYPASS_CACHE", "false").lower() == "true"
-    if query_vector is not None and not bypass_cache:
+    if not BYPASS_CACHE and query_vector is not None:
         cached = await _cache.lookup(
             company_name=request.company_name,
             query_vector=query_vector,

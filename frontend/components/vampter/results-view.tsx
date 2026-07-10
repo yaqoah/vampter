@@ -288,15 +288,16 @@ export function ResultsView({ target, result, isLoading, error }: ResultsViewPro
     return <ErrorBanner message={error} />
   }
 
-  const score = result ? Math.round((result as any).score ?? result.vulnerability_score ?? 84) : 84
-  const threatLevel = result?.threat_level ?? 'CRITICAL'
+  // ── Loading state - no fallbacks ─────────────────────────────────────
+  const score = result ? Math.round(result.vulnerability_score) : 0
+  const threatLevel = result?.threat_level
   const categoryEntries = result?.category_metrics
     ? Object.entries(result.category_metrics)
     : []
   const rawInsights = result?.direct_insights ?? result?.raw_insights ?? []
   const insights: VisualInsight[] = Array.isArray(rawInsights)
     ? rawInsights.map((item: any) => ({
-      category: item.category ?? item.section ?? 'Vulnerability',
+      category: item.category ?? item.section ?? '',
       text: item.text ?? item.insight ?? '',
     }))
     : []
