@@ -10,6 +10,8 @@ collection to retrieve the most semantically relevant text passages
 for the incoming user query.
 
 This node is invoked when the router classifies the query as ``"vector"``.
+No mock fallback is provided - Qdrant must be available for this node
+to function.
 """
 
 from __future__ import annotations
@@ -94,10 +96,10 @@ async def vector_node(state: AuditState) -> AuditState:
         await client.close()
 
     except Exception as exc:
-        logger.error("Vector node error: %s — returning empty passages.", exc)
-        passages = [
-            f"[MOCK PASSAGE] Policy clause for {company_name}: "
-            "Data is retained for a period not exceeding 90 days after service termination."
-        ]
+        logger.error("Vector node error: %s — raising exception.", exc)
+        raise RuntimeError(
+            f"Qdrant vector search failed: {exc}. "
+            "Ensure Qdrant is running and the 'vampter_docs' collection is populated."
+        ) from exc
 
     return {**state, "retrieved_passages": passages}

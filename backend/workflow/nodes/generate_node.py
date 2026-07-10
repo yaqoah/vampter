@@ -16,19 +16,19 @@ Flow
 3. Call ``client.chat.completions.create(response_model=AuditReport, ...)``.
 4. Write the validated ``AuditReport`` instance to ``state["report"]``.
 
-Fallback
---------
-If the Gemini API key is absent or the call fails, the node returns a
-deterministic mock ``AuditReport`` populated from the available context
-so the full request-response cycle always completes.
+Requirements
+------------
+At least one LLM provider must be configured (Gemini or Groq).
+If no provider is available, an HTTPException is raised.
 """
 
 from __future__ import annotations
 
 import logging
+from fastapi import HTTPException, status
 
 from config import settings
-from workflow.state import AuditState, AuditReport, ThreatLevel, PolicyInsight
+from workflow.state import AuditState, AuditReport
 
 logger = logging.getLogger(__name__)
 
@@ -48,68 +48,13 @@ Be precise, factual, and conservative in scoring. Only flag genuine risks.
 """.strip()
 
 
-def _build_mock_report(company_name: str, context: str) -> AuditReport:
-    """Generate a plausible mock AuditReport when the live LLM is unavailable."""
-    return AuditReport(
-        company_name=company_name,
-        vulnerability_score=42.5,
-        threat_level=ThreatLevel.MEDIUM,
-        category_metrics={
-            "data_privacy": 65.0,
-            "financial": 30.0,
-            "contract_terms": 25.0,
-        },
-        direct_insights=[
-            {
-                "category": "Data Privacy",
-                "text": "Policy scope is broadly defined and may include implicit data collection.",
-            },
-            {
-                "category": "Financial",
-                "text": "90-day retention window post-termination may not meet GDPR Article 5(1)(e).",
-            },
-            {
-                "category": "Contract Terms",
-                "text": "Third-party data sharing clause lacks explicit opt-out mechanism.",
-            },
-        ],
-        raw_insights=[
-            PolicyInsight(
-                section="§1 Scope of Application",
-                insight="Policy scope is broadly defined and may include implicit data collection.",
-                severity=ThreatLevel.LOW,
-            ),
-            PolicyInsight(
-                section="§2 Data Retention",
-                insight="90-day retention window post-termination may not meet GDPR Article 5(1)(e).",
-                severity=ThreatLevel.MEDIUM,
-            ),
-            PolicyInsight(
-                section="§3 Third-Party Sharing",
-                insight="Third-party data sharing clause lacks explicit opt-out mechanism.",
-                severity=ThreatLevel.HIGH,
-            ),
-        ],
-        timeline_trends=[],
-        graph_nodes=[
-            {"id": "p1", "label": company_name, "node_type": "Platform", "properties": {}},
-            {"id": "d1", "label": "Privacy Policy", "node_type": "Document", "properties": {}},
-            {"id": "r1", "label": "v4.1.0", "node_type": "Revision", "properties": {}},
-        ],
-        graph_edges=[
-            {"source": "p1", "target": "d1", "relation": "TRACKS_POLICY"},
-            {"source": "d1", "target": "r1", "relation": "HAS_REVISION_VERSION"},
-        ],
-    )
-
-
 async def generate_node(state: AuditState) -> AuditState:
     """
     Generate a validated ``AuditReport`` from compressed policy context.
 
     Uses ``instructor`` to patch the Gemini client and enforce Pydantic
     schema compliance on the model's output. Falls back to Groq if Gemini
-    key is missing or fails, and finally to a mock report.
+    key is missing or fails.
 
     Parameters
     ----------
@@ -214,18 +159,19 @@ async def generate_node(state: AuditState) -> AuditState:
 
         except Exception as groq_exc:
             logger.error(
-                "Groq generation also failed (%s: %s) — returning mock AuditReport.",
+                "Groq generation also failed (%s: %s).",
                 type(groq_exc).__name__,
                 groq_exc,
                 exc_info=groq_exc,
             )
     else:
         logger.warning(
-            "GROQ_API_KEY not set — returning mock AuditReport for company='%s'.",
+            "GROQ_API_KEY not set — no LLM provider available for company='%s'.",
             company_name,
         )
 
-    # ── Final safety net: deterministic mock ──────────────────────────────────
-    mock = _build_mock_report(company_name, context)
-    return {**state, "report": mock}
-
+    # ── No LLM provider available ─────────────────────────────────────────────
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="LLM_PROVIDER_MISSING"
+    )

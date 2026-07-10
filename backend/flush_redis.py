@@ -1,29 +1,37 @@
-#!/usr/bin/env python3
 """
 flush_redis.py
 ==============
-Utility script to completely flush the local Redis database.
+
+Utility script to force-flush the semantic cache by deleting all keys
+matching the vampter_cache:* pattern in Redis.
 """
 
 import asyncio
-import sys
-from pathlib import Path
-
-# Adjust python path to import config
-sys.path.append(str(Path(__file__).parent.absolute()))
+import logging
 
 from cache.connection import get_async_client
 
-async def main():
-    print("Connecting to Redis and flushing all databases...")
+logger = logging.getLogger(__name__)
+
+async def flush_semantic_cache() -> None:
+    """
+    Delete all keys matching the vampter_cache:* pattern in Redis.
+    """
+    client = await get_async_client()
     try:
-        client = await get_async_client()
-        await client.flushall()
-        print("Successfully flushed Redis cache (FLUSHALL completed).")
+        # Find all keys matching the pattern
+        keys = await client.keys("vampter_cache:*")
+
+        if not keys:
+            logger.info("No semantic cache keys found to flush.")
+            return
+
+        # Delete all matching keys
+        deleted = await client.delete(*keys)
+        logger.info("Flushed semantic cache: deleted %d keys.", deleted)
+    finally:
         await client.aclose()
-    except Exception as exc:
-        print(f"Error flushing Redis: {exc}", file=sys.stderr)
-        sys.exit(1)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(flush_semantic_cache())

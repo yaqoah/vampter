@@ -27,9 +27,10 @@ Pipeline Flow
 from __future__ import annotations
 
 import logging
+import os
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -70,24 +71,71 @@ async def get_platforms() -> list[dict]:
                 if service_id:
                     results.append({"id": service_id, "name": service_name})
             if not results:
-                # Plausible fallback defaults if services index is offline or unreachable
-                results = [
-                    {"id": "amazon", "name": "Amazon"},
-                    {"id": "google", "name": "Google"},
-                    {"id": "netflix", "name": "Netflix"},
-                    {"id": "meta", "name": "Meta"},
-                    {"id": "zoom", "name": "Zoom"}
-                ]
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="PLATFORMS_FETCH_FAILED"
+                )
             return results
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("Failed to dynamically fetch platforms: %s", exc, exc_info=True)
-        return [
-            {"id": "amazon", "name": "Amazon"},
-            {"id": "google", "name": "Google"},
-            {"id": "netflix", "name": "Netflix"},
-            {"id": "meta", "name": "Meta"},
-            {"id": "zoom", "name": "Zoom"}
-        ]
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="PLATFORMS_FETCH_FAILED"
+        )
+
+
+@router.get(
+    "/platforms/search",
+    summary="Search platforms by name",
+    description="Search for platforms by name using fuzzy matching against the Neo4j database."
+)
+async def search_platforms(q: str = Query(..., min_length=1, max_length=100)) -> list[dict]:
+    """
+    Search for platforms by name using fuzzy matching against the Neo4j database.
+
+    Parameters
+    ----------
+    q:
+        The search query string (minimum 1 character, maximum 100 characters).
+
+    Returns
+    -------
+    list[dict]
+        List of matching platforms with their names and IDs.
+    """
+    from neo4j import AsyncGraphDatabase
+
+    try:
+        # Connect to Neo4j
+        auth = (settings.neo4j_user, settings.neo4j_password.get_secret_value())
+        async with AsyncGraphDatabase.driver(settings.neo4j_uri, auth=auth) as driver:
+            async with driver.session() as session:
+                # Execute Cypher query with fuzzy matching
+                query = """
+                MATCH (p:Platform)
+                WHERE toLower(p.name) CONTAINS toLower($query)
+                RETURN p.id AS id, p.name AS name
+                LIMIT 10
+                """
+                result = await session.run(query, query=q)
+                records = await result.data()
+
+                if not records:
+                    logger.warning("SEARCH_FAILURE: Neo4j database returned 0 Platform nodes.")
+                    return []
+
+                # Transform results to list of dicts with id and name
+                platforms = [{"id": rec.get("id", ""), "name": rec.get("name", "")} for rec in records]
+                return platforms
+
+    except Exception as exc:
+        logger.error("Failed to search platforms: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="PLATFORMS_SEARCH_FAILED"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +221,6 @@ async def run_audit(request: AuditRequest) -> AuditReport:
     query_vector = _embed_query(request.query)
 
     # ── Step 2: Semantic cache check ────────────────────────────────────────
-    import os
     bypass_cache = os.getenv("BYPASS_CACHE", "false").lower() == "true"
     if query_vector is not None and not bypass_cache:
         cached = await _cache.lookup(

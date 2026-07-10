@@ -1,0 +1,13 @@
+tools:
+  shell:
+    allow:
+      - "git log *"
+      - "find *"
+      - "grep *"
+      - "ls *"
+      - Get-ChildItem *
+      - Where-Object { *
+      - Select-Object FullName
+      - dir *
+    deny:
+      - "rm *"

@@ -14,12 +14,19 @@ into one of two execution branches:
   question, best answered by a multi-hop Neo4j Cypher walk.
 
 The node writes ``state["route"]`` and returns the modified state.
+
+Requirements
+------------
+At least one LLM provider must be configured (Gemini or Groq).
+If no provider is available, an HTTPException is raised.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import Any, Dict
+
+from fastapi import HTTPException, status
 
 from config import settings
 from workflow.state import AuditState
@@ -46,8 +53,9 @@ async def router_node(state: AuditState) -> AuditState:
     """
     Classify the query and set ``state["route"]``.
 
-    Falls back to ``"vector"`` if the Gemini API key is not configured or the
-    call fails, ensuring the pipeline is always operational in development.
+    Uses Gemini or Groq to make a routing decision. No fallback is provided
+    if no LLM provider is available - this ensures the system fails explicitly
+    when misconfigured.
 
     Parameters
     ----------
@@ -64,28 +72,30 @@ async def router_node(state: AuditState) -> AuditState:
     company_name = state.get("company_name", "")
     intents = state.get("intents", [])
 
-    api_key = (
+    gemini_api_key = (
         settings.gemini_api_key.get_secret_value()
         if settings.gemini_api_key
         else None
     )
+    groq_api_key = (
+        settings.groq_api_key.get_secret_value()
+        if settings.groq_api_key
+        else None
+    )
 
-    # Build prompt early for potential Groq use in either branch
+    # Build prompt for LLM routing
     prompt = _ROUTER_PROMPT_TEMPLATE.format(
         query=query,
         company_name=company_name,
         intents=", ".join(intents) if intents else "none",
     )
 
-    route = "vector"  # safe default
-
-    if api_key:
-
-        # ── Primary: Gemini ──────────────────────────────────────────────────
+    # ── Primary: Gemini ──────────────────────────────────────────────────
+    if gemini_api_key:
         try:
             import google.genai as genai  # type: ignore[import]
 
-            client = genai.Client(api_key=api_key)
+            client = genai.Client(api_key=gemini_api_key)
             response = client.models.generate_content(
                 model="gemini-2.0-flash",
                 contents=prompt,
@@ -93,96 +103,59 @@ async def router_node(state: AuditState) -> AuditState:
             raw = response.text.strip().lower()
             if raw in ("vector", "graph"):
                 route = raw
-            else:
-                logger.warning(
-                    "Router Gemini returned unexpected value '%s'; defaulting to 'vector'.", raw
-                )
+                logger.info("Router decision (Gemini): route='%s'  query='%s'", route, query[:60])
+                return {**state, "route": route}
+            logger.warning(
+                "Router Gemini returned unexpected value '%s'; raising error.", raw
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Router LLM returned invalid value: {raw}"
+            )
+        except HTTPException:
+            raise
         except Exception as gemini_exc:
             logger.warning(
                 "Router Gemini call failed (%s: %s) — pivoting to Groq failover.",
                 type(gemini_exc).__name__,
                 gemini_exc,
-                exc_info=gemini_exc,
             )
 
-            # ── Failover: Groq ───────────────────────────────────────────────
-            groq_api_key = (
-                settings.groq_api_key.get_secret_value()
-                if settings.groq_api_key
-                else None
+    # ── Failover: Groq ───────────────────────────────────────────────────
+    if groq_api_key:
+        try:
+            from groq import Groq  # type: ignore[import]
+
+            groq_client = Groq(api_key=groq_api_key)
+            groq_response = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=10,
+                temperature=0.0,
             )
-            if groq_api_key:
-                try:
-                    from groq import Groq  # type: ignore[import]
+            raw = groq_response.choices[0].message.content.strip().lower()
+            if raw in ("vector", "graph"):
+                logger.info("Router decision (Groq): route='%s'  query='%s'", raw, query[:60])
+                return {**state, "route": raw}
+            logger.warning(
+                "Groq router returned unexpected value '%s'; raising error.", raw
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Router LLM returned invalid value: {raw}"
+            )
+        except HTTPException:
+            raise
+        except Exception as groq_exc:
+            logger.error(
+                "Groq failover router also failed (%s: %s).",
+                type(groq_exc).__name__,
+                groq_exc,
+            )
 
-                    groq_client = Groq(api_key=groq_api_key)
-                    groq_response = groq_client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
-                        messages=[{"role": "user", "content": prompt}],
-                        max_tokens=10,
-                        temperature=0.0,
-                    )
-                    raw = groq_response.choices[0].message.content.strip().lower()
-                    if raw in ("vector", "graph"):
-                        route = raw
-                        logger.info("Groq failover router decision: route='%s'", route)
-                    else:
-                        logger.warning(
-                            "Groq router returned unexpected value '%s'; defaulting to 'vector'.", raw
-                        )
-                except Exception as groq_exc:
-                    logger.error(
-                        "Groq failover router also failed (%s: %s) — falling back to heuristic.",
-                        type(groq_exc).__name__,
-                        groq_exc,
-                        exc_info=groq_exc,
-                    )
-            else:
-                logger.warning("GROQ_API_KEY not set — heuristic router will be used.")
-
-    else:
-        # ── Groq Failover: Try Groq before heuristic ─────────────────────────────
-        groq_api_key = (
-            settings.groq_api_key.get_secret_value()
-            if settings.groq_api_key
-            else None
-        )
-        if groq_api_key:
-            try:
-                from groq import Groq  # type: ignore[import]
-
-                groq_client = Groq(api_key=groq_api_key)
-                groq_response = groq_client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=10,
-                    temperature=0.0,
-                )
-                raw = groq_response.choices[0].message.content.strip().lower()
-                if raw in ("vector", "graph"):
-                    route = raw
-                    logger.info("Groq router decision (no Gemini): route='%s'", route)
-                else:
-                    logger.warning(
-                        "Groq router returned unexpected value '%s'; defaulting to 'vector'.", raw
-                    )
-            except Exception as groq_exc:
-                logger.error(
-                    "Groq router also failed (%s: %s) — falling back to heuristic.",
-                    type(groq_exc).__name__,
-                    groq_exc,
-                    exc_info=groq_exc,
-                )
-
-        # Heuristic fallback: if query mentions revisions/changes/contradictions → graph
-        if route == "vector":
-            graph_keywords = {"revision", "change", "contradict", "differ", "history", "version"}
-            if any(kw in query.lower() for kw in graph_keywords):
-                route = "graph"
-        logger.warning(
-            "GEMINI_API_KEY not set — using fallback router, route='%s'.", route
-        )
-
-    logger.info("Router decision: route='%s'  query='%s'", route, query[:60])
-    return {**state, "route": route}
+    # ── No LLM provider available ────────────────────────────────────────
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="LLM_PROVIDER_MISSING"
+    )
 

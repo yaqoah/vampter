@@ -51,10 +51,8 @@ Orchestration sequence
 
 LLM selection
 -------------
-The pipeline uses ``google.genai`` (Gemini) as the primary LLM for
-triple extraction via LlamaIndex's Gemini integration.  If
-``GEMINI_API_KEY`` is not set, the pipeline falls back to a
-``MockLLM`` for offline testing and development.
+The pipeline uses ``google.genai`` (Gemini) for triple extraction via
+LlamaIndex's Gemini integration.  ``GEMINI_API_KEY`` must be configured.
 """
 
 from __future__ import annotations
@@ -122,9 +120,22 @@ def _build_llm(settings: AppSettings):
     """
     Construct the LLM instance used for triple extraction.
 
-    Prefers Gemini 1.5 Pro when ``GEMINI_API_KEY`` is configured.
-    Falls back to LlamaIndex's ``MockLLM`` for fully offline operation
-    (no triples will be extracted, but vector ingestion proceeds normally).
+    Requires Gemini 1.5 Pro when ``GEMINI_API_KEY`` is configured.
+    No mock fallback is provided - real LLM is required for graph extraction.
+
+    Parameters
+    ----------
+    settings:
+        Pydantic ``AppSettings`` instance.
+
+    Returns
+    -------
+    Gemini LLM instance.
+
+    Raises
+    ------
+    RuntimeError
+        If Gemini API key is not configured or the package is unavailable.
     """
     api_key = (
         settings.gemini_api_key.get_secret_value()
@@ -143,20 +154,16 @@ def _build_llm(settings: AppSettings):
             )
             logger.info("LLM: Gemini  model=%s", settings.llm_model)
             return llm
-        except ImportError:
-            logger.warning(
-                "llama-index-llms-gemini not installed.  "
-                "Attempting OpenAI-compatible endpoint ..."
-            )
+        except ImportError as import_err:
+            raise RuntimeError(
+                "llama-index-llms-gemini not installed. "
+                "Install it with: pip install llama-index-llms-gemini"
+            ) from import_err
 
-    # Fallback: MockLLM — triples won't be real but pipeline is testable.
-    from llama_index.core.llms import MockLLM  # type: ignore[import]
-
-    logger.warning(
-        "GEMINI_API_KEY not set or Gemini LLM unavailable.  "
-        "Using MockLLM — graph extraction will be a no-op."
+    raise RuntimeError(
+        "GEMINI_API_KEY not set. Graph extraction requires a configured LLM. "
+        "Set GEMINI_API_KEY in your environment."
     )
-    return MockLLM(max_tokens=512)
 
 
 # ---------------------------------------------------------------------------

@@ -67,8 +67,6 @@ def configure_embedding_model(
        (requires ``llama-index-embeddings-huggingface`` package).
     2. ``llama_index.embeddings.fastembed.FastEmbedEmbedding``
        (requires ``llama-index-embeddings-fastembed`` package).
-    3. ``llama_index.core.embeddings.MockEmbedding`` — offline fallback;
-       produces zero-vectors (no semantic search, but pipeline runs).
 
     The resolved model is registered on ``llama_index.core.Settings``
     so every downstream index call inherits it automatically.
@@ -77,50 +75,50 @@ def configure_embedding_model(
     ----------
     embed_model_uri:
         Accepted as-is for HuggingFace (used as ``model_name`` after
-        stripping the ``"local:"`` prefix).  Ignored for fallback modes.
+        stripping the ``"local:"`` prefix).
+
+    Raises
+    ------
+    RuntimeError
+        If no embedding model is available. Install one of the required
+        packages for real semantic search.
     """
     # Strip the "local:" scheme prefix to get the raw model name.
     model_name = embed_model_uri.removeprefix("local:")
-
-    embed_model = None
 
     # ── Attempt 1: HuggingFaceEmbedding ────────────────────────────────────
     try:
         from llama_index.embeddings.huggingface import HuggingFaceEmbedding  # type: ignore[import]
         embed_model = HuggingFaceEmbedding(model_name=model_name)
+        LlamaSettings.embed_model = embed_model
         logger.info(
             "Embedding model: HuggingFaceEmbedding  model='%s'", model_name
         )
+        return
     except ImportError:
         logger.debug(
             "llama-index-embeddings-huggingface not available, trying FastEmbed ..."
         )
 
     # ── Attempt 2: FastEmbedEmbedding ───────────────────────────────────────
-    if embed_model is None:
-        try:
-            from llama_index.embeddings.fastembed import FastEmbedEmbedding  # type: ignore[import]
-            embed_model = FastEmbedEmbedding(model_name=model_name)
-            logger.info(
-                "Embedding model: FastEmbedEmbedding  model='%s'", model_name
-            )
-        except ImportError:
-            logger.debug(
-                "llama-index-embeddings-fastembed not available either."
-            )
-
-    # ── Fallback: MockEmbedding (zero-vectors, pipeline still functional) ───
-    if embed_model is None:
-        from llama_index.core.embeddings import MockEmbedding
-        embed_model = MockEmbedding(embed_dim=384)
-        logger.warning(
-            "No local embedding backend found.  Falling back to MockEmbedding "
-            "(zero-vectors).  Install 'llama-index-embeddings-huggingface' or "
-            "'llama-index-embeddings-fastembed' for real semantic search."
+    try:
+        from llama_index.embeddings.fastembed import FastEmbedEmbedding  # type: ignore[import]
+        embed_model = FastEmbedEmbedding(model_name=model_name)
+        LlamaSettings.embed_model = embed_model
+        logger.info(
+            "Embedding model: FastEmbedEmbedding  model='%s'", model_name
+        )
+        return
+    except ImportError:
+        logger.debug(
+            "llama-index-embeddings-fastembed not available either."
         )
 
-    LlamaSettings.embed_model = embed_model
-    logger.info("Embedding model registered on global LlamaSettings.")
+    # ── No embedding model available ───────────────────────────────────────
+    raise RuntimeError(
+        "No embedding model available. Install 'llama-index-embeddings-huggingface' "
+        "or 'llama-index-embeddings-fastembed' for semantic search."
+    )
 
 
 def build_node_pipeline(

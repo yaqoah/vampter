@@ -17,6 +17,8 @@ change histories, or structural analysis that requires navigating the
 full document lineage chain.
 
 This node is invoked when the router classifies the query as ``"graph"``.
+No mock fallback is provided - Neo4j must be available for this node
+to function.
 """
 
 from __future__ import annotations
@@ -102,15 +104,10 @@ async def graph_node(state: AuditState) -> AuditState:
         )
 
     except Exception as exc:
-        logger.error("Graph node error: %s — returning mock passages.", exc)
-        # Graceful fallback: minimal mock passage so the pipeline can complete
-        passages = [
-            f"[{company_name} Platform] Privacy Policy (v4.1.0) — §1: "
-            "Scope of Application. This policy applies to all OTA updates and "
-            "associated data collection activities.",
-            f"[{company_name} Platform] Privacy Policy (v4.1.0) — §2: "
-            "Data Retention. Personal data is retained for a maximum of 90 days "
-            "following service termination.",
-        ]
+        logger.error("Graph node error: %s — raising exception.", exc)
+        raise RuntimeError(
+            f"Neo4j graph traversal failed: {exc}. "
+            "Ensure Neo4j is running and the policy graph is populated."
+        ) from exc
 
     return {**state, "retrieved_passages": passages}

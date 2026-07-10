@@ -1,10 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Search, Zap, Wallet, ScanEye, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
-
-const PRESETS = ['Amazon', 'Google', 'Netflix', 'Meta', 'Zoom']
 
 interface PlatformOption {
   id: string
@@ -46,6 +44,7 @@ export function CommandInput({ onExecute }: CommandInputProps) {
     downgrade: false,
   })
   const [platforms, setPlatforms] = useState<PlatformOption[]>([])
+  const [loadingPlatforms, setLoadingPlatforms] = useState(true)
 
   useEffect(() => {
     let active = true
@@ -64,6 +63,8 @@ export function CommandInput({ onExecute }: CommandInputProps) {
       } catch (err) {
         console.error('Failed to fetch platforms:', err)
         if (active) setPlatforms([])
+      } finally {
+        if (active) setLoadingPlatforms(false)
       }
     }
     fetchPlatforms()
@@ -72,13 +73,14 @@ export function CommandInput({ onExecute }: CommandInputProps) {
     }
   }, [])
 
-  const filtered = platforms.filter(
-    (s) =>
-      target &&
-      (s.name.toLowerCase().includes(target.toLowerCase()) ||
-        s.id.toLowerCase().includes(target.toLowerCase())) &&
-      s.name.toLowerCase() !== target.toLowerCase(),
-  )
+  const filtered = useMemo(() => {
+    if (!target) return []
+    return platforms.filter(
+      (s) =>
+        s.name.toLowerCase().includes(target.toLowerCase()) ||
+        s.id.toLowerCase().includes(target.toLowerCase())
+    )
+  }, [platforms, target])
 
   function toggleRadar(id: string) {
     setRadars((prev) => ({ ...prev, [id]: !prev[id] }))
@@ -87,8 +89,21 @@ export function CommandInput({ onExecute }: CommandInputProps) {
   const handleSelect = (val: string) => {
     setTarget(val)
     setOpen(false)
+  }
+
+  const handleQuickSelect = (val: string) => {
+    setTarget(val)
+    setOpen(false)
     onExecute?.(val, concern, radars)
   }
+
+  // Top platforms for quick selection (first 5 alphabetically)
+  const topPlatforms = useMemo(() => {
+    return platforms
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 5)
+  }, [platforms])
 
   return (
     <div className="relative">
@@ -106,7 +121,7 @@ export function CommandInput({ onExecute }: CommandInputProps) {
         </div>
 
         <div className="flex flex-col gap-5 p-5 sm:p-6">
-          {/* Upper: target autocomplete + presets */}
+          {/* Upper: target autocomplete + top platforms */}
           <div className="flex flex-col gap-3">
             <label
               htmlFor="target"
@@ -149,27 +164,29 @@ export function CommandInput({ onExecute }: CommandInputProps) {
               )}
             </div>
 
-            {/* Instant presets */}
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="mr-1 font-mono text-[11px] uppercase tracking-widest text-muted-foreground/80">
-                Presets
-              </span>
-              {PRESETS.map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  onClick={() => handleSelect(preset)}
-                  className={cn(
-                    'group rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all duration-200',
-                    target === preset
-                      ? 'border-primary/60 bg-primary/15 text-primary shadow-[0_0_18px_-6px_var(--color-primary)]'
-                      : 'border-border/70 bg-background/40 text-muted-foreground hover:border-primary/40 hover:text-foreground hover:shadow-[0_0_18px_-8px_var(--color-primary)]',
-                  )}
-                >
-                  {preset}
-                </button>
-              ))}
-            </div>
+            {/* Quick selection from real platform data */}
+            {!loadingPlatforms && platforms.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="mr-1 font-mono text-[11px] uppercase tracking-widest text-muted-foreground/80">
+                  Quick Select
+                </span>
+                {topPlatforms.map((platform) => (
+                  <button
+                    key={platform.id}
+                    type="button"
+                    onClick={() => handleQuickSelect(platform.name)}
+                    className={cn(
+                      'group rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all duration-200',
+                      target === platform.name
+                        ? 'border-primary/60 bg-primary/15 text-primary shadow-[0_0_18px_-6px_var(--color-primary)]'
+                        : 'border-border/70 bg-background/40 text-muted-foreground hover:border-primary/40 hover:text-foreground hover:shadow-[0_0_18px_-8px_var(--color-primary)]',
+                    )}
+                  >
+                    {platform.name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Middle: concern textarea */}
