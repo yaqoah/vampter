@@ -13,7 +13,6 @@ import {
   AlertCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { DeepEvidence } from '@/components/vampter/deep-evidence'
 import type { AuditResult, VisualInsight } from '@/types/audit'
 
 /* ------------------------------------------------------------------ */
@@ -512,13 +511,6 @@ export function ResultsView({ target, result, isLoading, error }: ResultsViewPro
           </ul>
         </div>
       </div>
-
-      {/* Rows 3 & 4: Deep architectural evidence */}
-      <DeepEvidence
-        timeline={result?.greed_trajectory_timeline ?? result?.timeline_trends ?? []}
-        contradictionNodes={result?.contradiction_matrix_nodes ?? result?.graph_nodes ?? []}
-        isLoading={isLoading}
-      />
     </section>
   )
 }

@@ -60,27 +60,17 @@ logger = logging.getLogger(__name__)
 # Ontology Definitions
 # ---------------------------------------------------------------------------
 
-#: Allowed entity / node label types.
-ENTITY_TYPES: List[str] = [
+ENTITY_TYPES = [
     "Platform",
-    "Document",
+    "Document", 
     "Revision",
     "Clause",
 ]
 
-#: Allowed directed edge (relation) types.
-RELATION_TYPES: List[str] = [
+RELATION_TYPES = [
     "TRACKS_POLICY",
     "HAS_REVISION_VERSION",
     "CONTAINS_CLAUSE",
-]
-
-#: Explicit schema triples that guide the LLM's extraction.
-#: Each tuple is (subject_type, relation_type, object_type).
-SCHEMA_TRIPLES: List[Tuple[str, str, str]] = [
-    ("Platform",  "TRACKS_POLICY",        "Document"),
-    ("Document",  "HAS_REVISION_VERSION", "Revision"),
-    ("Revision",  "CONTAINS_CLAUSE",      "Clause"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -134,7 +124,7 @@ def build_schema_extractor(
     ----------
     llm:
         The language model to use for triple extraction.  Should be a
-        capable instruction-following model (Gemini 1.5 Pro recommended).
+        capable instruction-following model (Poolside Laguna recommended).
     strict_mode:
         When ``True`` (default), the extractor filters out any triple
         whose entity or relation types are not declared in the schema.
@@ -158,9 +148,9 @@ def build_schema_extractor(
 
     extractor = SchemaLLMPathExtractor(
         llm=llm,
+        extract_prompt=_EXTRACTION_SYSTEM_PROMPT,
         possible_entities=ENTITY_TYPES,
         possible_relations=RELATION_TYPES,
-        kg_triple_extract_template=None,   # Use default prompt template
         strict=strict_mode,
         max_triplets_per_chunk=max_triplets_per_chunk,
         num_workers=4,

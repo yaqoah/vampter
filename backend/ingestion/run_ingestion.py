@@ -131,10 +131,47 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         help="Skip Neo4j schema migration (useful if already run).",
     )
     parser.add_argument(
+        "--incremental",
+        action="store_true",
+        default=False,
+        help="Skip platforms that already have Document data in Neo4j.",
+    )
+    parser.add_argument(
+        "--max-platforms",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Limit ingestion to first N platforms (useful for testing).",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=50,
+        metavar="N",
+        help="Number of platforms to process per batch (for chunked ingestion).",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        default=False,
+        help="Resume from last checkpoint, skip already completed platforms.",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Console log verbosity level.",
+    )
+    parser.add_argument(
+        "--clear-all",
+        action="store_true",
+        default=False,
+        help="Clear all Neo4j and Qdrant data before ingestion (fresh start).",
+    )
+    parser.add_argument(
+        "--clear-platform",
+        metavar="NAME",
+        help="Clear data for specific platform before ingestion (re-process).",
     )
 
     return parser
@@ -153,13 +190,17 @@ async def _main(args: argparse.Namespace) -> int:
     logger.info(_SEP)
     logger.info("  VAMPTER - Asynchronous Ingestion Pipeline")
     logger.info(_SEP)
-    logger.info("  API URL       : %s", args.api_url)
-    logger.info("  Storage dir   : %s", Path(args.storage).resolve())
-    logger.info("  Embed model   : %s", args.embed)
-    logger.info("  Chunk size    : %d tokens", args.chunk_size)
-    logger.info("  Chunk overlap : %d tokens", args.chunk_overlap)
-    logger.info("  Dry run       : %s", args.dry_run)
-    logger.info("  Skip schema   : %s", args.skip_schema_migration)
+    logger.info("  API URL        : %s", args.api_url)
+    logger.info("  Storage dir    : %s", Path(args.storage).resolve())
+    logger.info("  Embed model    : %s", args.embed)
+    logger.info("  Chunk size     : %d tokens", args.chunk_size)
+    logger.info("  Chunk overlap  : %d tokens", args.chunk_overlap)
+    logger.info("  Dry run        : %s", args.dry_run)
+    logger.info("  Skip schema    : %s", args.skip_schema_migration)
+    logger.info("  Resume         : %s", args.resume)
+    logger.info("  Incremental    : %s", args.incremental)
+    logger.info("  Max platforms  : %s", args.max_platforms if args.max_platforms else "all")
+    logger.info("  Batch size     : %d", args.batch_size)
     logger.info(_SEP)
 
     try:
@@ -172,6 +213,12 @@ async def _main(args: argparse.Namespace) -> int:
             chunk_overlap=args.chunk_overlap,
             dry_run=args.dry_run,
             run_schema_migration=not args.skip_schema_migration,
+            incremental=args.incremental,
+            max_platforms=args.max_platforms,
+            clear_all=args.clear_all,
+            clear_platform=args.clear_platform,
+            resume=args.resume,
+            batch_size=args.batch_size,
         )
     except Exception as exc:  # noqa: BLE001
         logger.error("Pipeline raised an unexpected exception: %s", exc, exc_info=True)

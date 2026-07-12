@@ -21,11 +21,14 @@ Schema hierarchy
 
 from __future__ import annotations
 
+import logging
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing_extensions import TypedDict
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +85,17 @@ class GraphEdge(BaseModel):
         description="Relation type: TRACKS_POLICY | HAS_REVISION_VERSION | CONTAINS_CLAUSE"
     )
 
+    @model_validator(mode='before')
+    @classmethod
+    def normalize_edge_data(cls, data: Any) -> Any:
+        """
+        Normalize edge data: accept 'label' as an alias for 'relation'.
+        This handles LLM output that may use 'label' instead of 'relation'.
+        """
+        if isinstance(data, dict) and "label" in data and "relation" not in data:
+            data = {**data, "relation": data["label"]}
+        return data
+
 
 # ---------------------------------------------------------------------------
 # AuditReport — top-level output schema
@@ -92,9 +106,11 @@ class AuditReport(BaseModel):
     """
     Fully validated audit report — the final output returned by the API.
 
-    This schema is passed to ``instructor`` to force deterministic
-    serialisation from the Gemini Flash LLM response.
+    This schema is passed to the LLM to force deterministic
+    serialisation from the Poolside LLM response.
     """
+
+    model_config = {"populate_by_name": True}
 
     company_name: str = Field(description="Target company or platform name")
     vulnerability_score: float = Field(
@@ -140,7 +156,7 @@ class AuditReport(BaseModel):
         description="Token count after LLMLingua compression",
     )
 
-    # Alias fields for frontend compatibility
+    # Alias fields for frontend compatibility - populated by model_validator
     greed_trajectory_timeline: Optional[List[Dict[str, Any]]] = Field(
         default=None,
         description="Alias for timeline_trends for Greed Trajectory Engine",
@@ -149,6 +165,25 @@ class AuditReport(BaseModel):
         default=None,
         description="Alias for graph_nodes for Contradiction Matrix Web",
     )
+
+    @model_validator(mode='after')
+    def populate_alias_fields(self) -> 'AuditReport':
+        """Populate alias fields for frontend compatibility if empty."""
+        if self.greed_trajectory_timeline is None:
+            # Convert TimelineTrend objects to dicts for frontend (data injected by _normalize_json_data if empty)
+            self.greed_trajectory_timeline = [
+                {"month": t.month, "change_count": t.change_count, "dominant_clause_type": t.dominant_clause_type or ""}
+                for t in self.timeline_trends
+            ] if self.timeline_trends else []
+            
+        if self.contradiction_matrix_nodes is None:
+            # Convert GraphNode objects to dicts for frontend (data injected by _normalize_json_data if empty)
+            self.contradiction_matrix_nodes = [
+                {"id": n.id, "label": n.label, "node_type": n.node_type, "properties": n.properties}
+                for n in self.graph_nodes
+            ] if self.graph_nodes else []
+            
+        return self
 
 
 # ---------------------------------------------------------------------------

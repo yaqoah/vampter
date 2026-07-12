@@ -55,17 +55,36 @@ async def compress_node(state: AuditState) -> AuditState:
         logger.warning(
             "Compress node: no passages to compress for company='%s'.", company_name
         )
+        # Still return empty context to indicate no data
         return {**state, "compressed_context": ""}
 
     # Join all passages into one block for the compressor.
     full_context = "\n\n".join(passages)
+    logger.info("Compress node: %d passages, %d chars, %d words for company='%s'", 
+                len(passages), len(full_context), len(full_context.split()), company_name)
+    
+    # DEBUG: Log passage content preview
+    if passages:
+        for i, p in enumerate(passages[:3]):
+            logger.debug("Compress node: passage[%d] = %d chars: %s...", i, len(p), p[:50].replace('\n', ' '))
 
-    compressed: str = full_context  # safe fallback
+    # If context is empty after joining, return empty
+    if not full_context.strip():
+        logger.warning("Compress node: empty joined context for company='%s'.", company_name)
+        return {**state, "compressed_context": ""}
+
+    # Start with uncompressed context as the default
+    final_compressed = full_context
+
+    # Only attempt compression if we have meaningful text
+    if len(full_context.strip()) < 20:
+        logger.info("Context too short for compression (%d chars) — using raw context.", len(full_context))
+        return {**state, "compressed_context": final_compressed}
 
     try:
         from llmlingua import PromptCompressor  # type: ignore[import]
 
-        def _compress() -> str:
+        def _compress() -> tuple[str, int, int]:
             compressor = PromptCompressor(
                 model_name="lgaalves/gpt2-dolly",   # lightweight local model
                 use_llmlingua2=False,
@@ -76,29 +95,48 @@ async def compress_node(state: AuditState) -> AuditState:
                 rate=_TARGET_TOKEN_RATIO,
                 force_tokens=["\n"],
             )
-            return result.get("compressed_prompt", full_context)
+            compressed_text = result.get("compressed_prompt", full_context)
+            return compressed_text, result.get("origin_tokens", 0), result.get("compressed_tokens", 0)
 
         loop = asyncio.get_event_loop()
-        compressed = await loop.run_in_executor(None, _compress)
+        compressed, origin_tokens, compressed_tokens = await loop.run_in_executor(None, _compress)
 
-        original_tokens = len(full_context.split())
-        compressed_tokens = len(compressed.split())
-        ratio = compressed_tokens / max(original_tokens, 1)
-        logger.info(
-            "LLMLingua compression: %d → %d tokens (%.0f%% retained)  company='%s'",
-            original_tokens,
-            compressed_tokens,
-            ratio * 100,
-            company_name,
-        )
+        # Use compressed text only if it's non-empty and actually has tokens
+        if compressed and compressed.strip() and (compressed_tokens > 0 or origin_tokens > 0):
+            # If compression didn't actually compress but returned valid text, still use it
+            if compressed_tokens == 0 and origin_tokens > 0:
+                # Compression returned empty but original had content - use original
+                final_compressed = full_context
+                logger.info(
+                    "Compression returned empty (%.0f → %.0f tokens) — using original context for company='%s'",
+                    origin_tokens, compressed_tokens, company_name
+                )
+            else:
+                final_compressed = compressed
+                logger.info(
+                    "LLMLingua compression: %d → %d tokens (%.0f%% retained)  company='%s'",
+                    origin_tokens,
+                    compressed_tokens,
+                    (compressed_tokens / max(origin_tokens, 1)) * 100,
+                    company_name,
+                )
+        else:
+            # Compression failed - keep the uncompressed context we already have
+            logger.info(
+                "LLMLingua compression produced empty result — keeping original context for company='%s'",
+                company_name,
+            )
+            # final_compressed is already set to full_context at line 72
 
     except ImportError:
         logger.warning(
             "llmlingua not installed — skipping compression, using raw context."
         )
+        final_compressed = full_context
     except Exception as exc:
         logger.error(
             "LLMLingua compression failed: %s — using uncompressed context.", exc
         )
+        final_compressed = full_context
 
-    return {**state, "compressed_context": compressed}
+    return {**state, "compressed_context": final_compressed}

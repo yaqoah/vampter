@@ -46,100 +46,97 @@ _cache = SemanticCache(threshold=0.92)
 
 
 # ---------------------------------------------------------------------------
-# Platform list / discovery endpoint
+# Platform list / discovery endpoint - ALL platforms from OTA
 # ---------------------------------------------------------------------------
 
 @router.get(
     "/platforms",
-    summary="Get tracked platforms",
-    description="Fetch a comprehensive index of currently tracked service/platform records."
+    summary="Get all tracked platforms",
+    description="Fetch a comprehensive index of all platforms available from Open Terms Archive."
 )
 async def get_platforms() -> list[dict]:
     """
-    Fetch a list of tracked platforms by utilizing the refactored
-    OpenTermsArchiveClient fetch_services call dynamically.
+    Fetch a list of all tracked platforms from OTA GitHub repos.
+
+    This endpoint returns ALL available platforms for the main dropdown.
+    Use /platforms/quick-select for only pre-seeded platforms.
     """
-    from ingestion.api_client import OpenTermsArchiveClient
     try:
-        async with OpenTermsArchiveClient() as client:
-            services = await client.fetch_services()
-            # Transform to clean format: [{"id": s.get("id"), "name": s.get("name")} for s in services]
-            results = []
-            for service in services:
-                service_id = service.get("id")
-                service_name = service.get("name", service_id)
-                if service_id:
-                    results.append({"id": service_id, "name": service_name})
-            if not results:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="PLATFORMS_FETCH_FAILED"
-                )
-            return results
-    except HTTPException:
-        raise
+        from ingestion.api_client import OpenTermsArchiveClient
+        client = OpenTermsArchiveClient()
+        platforms = client.fetch_services_sync() or []
+        return platforms
     except Exception as exc:
-        logger.error("Failed to dynamically fetch platforms: %s", exc, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="PLATFORMS_FETCH_FAILED"
-        )
+        logger.warning("OTA fetch failed: %s", exc)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Quick Select endpoint - only platforms with ingested data
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/platforms/quick-select",
+    summary="Get pre-seeded platforms",
+    description="Fetch platforms that have active structural data in Neo4j (pre-seeded or previously ingested)."
+)
+async def get_quick_select_platforms() -> list[dict]:
+    """
+    Fetch a list of platforms with ingested policy data for Quick Select.
+    Only returns platforms that have actual Document data.
+    """
+    try:
+        from neo4j import AsyncGraphDatabase
+        
+        auth = (settings.neo4j_user, settings.neo4j_password.get_secret_value())
+        async with AsyncGraphDatabase.driver(settings.neo4j_uri, auth=auth) as driver:
+            async with driver.session() as session:
+                cypher_query = """
+                MATCH (d:Document)
+                RETURN DISTINCT d.platform AS name
+                ORDER BY d.platform
+                """
+                result = await session.run(cypher_query)
+                records = await result.data()
+                
+                if records:
+                    platforms = [{"id": rec.get("name", ""), "name": rec.get("name", "")} for rec in records]
+                    return platforms
+    except Exception as exc:
+        logger.warning("Neo4j unavailable for quick-select: %s", exc)
+    
+    return []
 
 
 @router.get(
     "/platforms/search",
     summary="Search platforms by name",
-    description="Search for platforms by name using fuzzy matching against the Neo4j database."
+    description="Search for platforms by name using fuzzy matching against all available platforms."
 )
 async def search_platforms(q: str = Query(..., min_length=1, max_length=100)) -> list[dict]:
     """
-    Search for platforms by name using fuzzy matching against the Neo4j database.
+    Search for platforms by name against all available platforms from OTA.
 
-    Parameters
-    ----------
-    q:
-        The search query string (minimum 1 character, maximum 100 characters).
-
-    Returns
-    -------
-    list[dict]
-        List of matching platforms with their names and IDs.
+    This searches ALL platforms, not just those with ingested data.
+    Use /platforms/quick-select for only platforms with data.
     """
-    from neo4j import AsyncGraphDatabase
-
     try:
-        # Connect to Neo4j
-        auth = (settings.neo4j_user, settings.neo4j_password.get_secret_value())
-        async with AsyncGraphDatabase.driver(settings.neo4j_uri, auth=auth) as driver:
-            async with driver.session() as session:
-                # Execute Cypher query with case-insensitive matching
-                # Prioritizes prefix matches first, then substring matches
-                # Uses COLLATE for proper case-insensitive comparison
-                query = """
-                MATCH (p:Platform)
-                WHERE toLower(p.name) CONTAINS toLower($query)
-                RETURN p.id AS id, p.name AS name,
-                       CASE WHEN toLower(p.name) STARTS WITH toLower($query) THEN 0 ELSE 1 END AS sort_priority
-                ORDER BY sort_priority, p.name
-                LIMIT 10
-                """
-                result = await session.run(query, query=q)
-                records = await result.data()
-
-                if not records:
-                    logger.warning("SEARCH_FAILURE: Neo4j database returned 0 Platform nodes.")
-                    return []
-
-                # Transform results to list of dicts with id and name
-                platforms = [{"id": rec.get("id", ""), "name": rec.get("name", "")} for rec in records]
-                return platforms
-
+        from ingestion.api_client import OpenTermsArchiveClient
+        client = OpenTermsArchiveClient()
+        all_platforms = client.fetch_services_sync() or []
+        
+        # Case-insensitive substring match
+        q_lower = q.lower()
+        filtered = [
+            {"id": p["id"], "name": p["name"]}
+            for p in all_platforms
+            if q_lower in p.get("name", "").lower() or q_lower in p.get("id", "").lower()
+        ][:10]
+        return filtered
     except Exception as exc:
-        logger.error("Failed to search platforms: %s", exc, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="PLATFORMS_SEARCH_FAILED"
-        )
+        logger.warning("Platform search failed: %s", exc)
+    
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +195,52 @@ def _build_cache_key_text(company_name: str, query: str, intents: List[str]) -> 
     return f"Company: {company_name} | Query: {query} | Intents: {intents_str}"
 
 
+async def _ensure_company_ingested(company_name: str) -> bool:
+    """
+    Check if company has ingested data. If not, trigger on-demand ingestion.
+    
+    Parameters
+    ----------
+    company_name:
+        Target company to check/ingest.
+        
+    Returns
+    -------
+    bool
+        True if data exists (or was ingested), False on failure.
+    """
+    from neo4j import AsyncGraphDatabase
+    
+    # Check Neo4j for existing Document data
+    try:
+        auth = (settings.neo4j_user, settings.neo4j_password.get_secret_value())
+        async with AsyncGraphDatabase.driver(settings.neo4j_uri, auth=auth) as driver:
+            async with driver.session() as session:
+                result = await session.run(
+                    "MATCH (d:Document) WHERE toLower(d.platform) CONTAINS toLower($company) RETURN count(d) AS count",
+                    company=company_name
+                )
+                record = await result.single()
+                if record and record["count"] > 0:
+                    logger.info("Found %d existing documents for company='%s'", record["count"], company_name)
+                    return True
+    except Exception as exc:
+        logger.warning("Neo4j check failed: %s", exc)
+    
+    # No data exists - trigger on-demand ingestion
+    logger.info("No data found for company='%s' — triggering on-demand ingestion...", company_name)
+    try:
+        from ingestion.pipeline import ingest_company_on_demand
+        success = await ingest_company_on_demand(company_name)
+        if success:
+            logger.info("On-demand ingestion completed for company='%s'", company_name)
+            return True
+        return False
+    except Exception as exc:
+        logger.error("On-demand ingestion failed for company='%s': %s", company_name, exc)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
@@ -234,11 +277,19 @@ async def run_audit(request: AuditRequest) -> AuditReport:
         request.intents,
     )
 
-    # ── DEVELOPMENT BYPASS: Hardcoded override for testing ─────────────────────
-    BYPASS_CACHE = True
-    if BYPASS_CACHE:
+    # ── Step 1: Ensure company data exists (lazy load if needed) ───────────────
+    data_ready = await _ensure_company_ingested(request.company_name)
+    if not data_ready:
+        logger.warning("No data available for company='%s' after ingestion attempt", request.company_name)
+
+    # ── Determine cache bypass status ───────────────────────────────────
+    # Respect request parameter, or fall back to environment variable, or default to False
+    bypass_cache = request.bypass_cache
+    if bypass_cache is None:
+        bypass_cache = os.getenv("BYPASS_CACHE", "false").lower() in ("true", "1", "yes")
+    if bypass_cache:
         logger.warning(
-            "DEV BYPASS ACTIVE — Cache will be skipped for company='%s'.",
+            "Cache bypass active — Cache will be skipped for company='%s'.",
             request.company_name
         )
 
@@ -252,7 +303,7 @@ async def run_audit(request: AuditRequest) -> AuditReport:
     query_vector = _embed_query(cache_key_text)
 
     # ── Step 2: Semantic cache check ────────────────────────────────────────
-    if not BYPASS_CACHE and query_vector is not None:
+    if not bypass_cache and query_vector is not None:
         cached = await _cache.lookup(
             company_name=request.company_name,
             query_vector=query_vector,
@@ -287,7 +338,8 @@ async def run_audit(request: AuditRequest) -> AuditReport:
         )
 
     # ── Step 4: Store result in cache ───────────────────────────────────────
-    if query_vector is not None:
+    # Only cache non-empty reports to avoid caching empty results
+    if query_vector is not None and report.vulnerability_score > 0.0:
         try:
             await _cache.store(
                 company_name=request.company_name,

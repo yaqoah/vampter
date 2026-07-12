@@ -16,9 +16,8 @@ Suitable for queries involving cross-revision contradictions, policy
 change histories, or structural analysis that requires navigating the
 full document lineage chain.
 
-This node is invoked when the router classifies the query as ``"graph"``.
-No mock fallback is provided - Neo4j must be available for this node
-to function.
+If Neo4j is unavailable or unpopulated, falls back gracefully to
+the vector search path with a warning.
 """
 
 from __future__ import annotations
@@ -48,6 +47,22 @@ ORDER BY n.revision DESC, n.clause_id ASC
 LIMIT 50
 """
 
+# Alternative query that matches by platform name when ID doesn't match
+_CYPHER_BY_NAME_TEMPLATE = """
+MATCH (p:Platform)
+WHERE toLower(p.name) CONTAINS toLower($company_name)
+MATCH (n:Document)
+WHERE n.platform = p.id OR n.platform CONTAINS p.name
+RETURN
+    n.platform    AS platform,
+    n.name        AS document,
+    n.revision    AS revision,
+    n.clause_id   AS clause_id,
+    n.text        AS clause_text
+ORDER BY n.revision DESC, n.clause_id ASC
+LIMIT 50
+"""
+
 
 async def graph_node(state: AuditState) -> AuditState:
     """
@@ -56,8 +71,7 @@ async def graph_node(state: AuditState) -> AuditState:
     Traverses the four-hop chain:
     ``Platform → Document → Revision → Clause``
 
-    Results are formatted into human-readable passage strings that the
-    compression node and generation node can consume directly.
+    If Neo4j is unavailable or unpopulated, falls back to vector search.
 
     Parameters
     ----------
@@ -71,7 +85,7 @@ async def graph_node(state: AuditState) -> AuditState:
     """
     company_name = state.get("company_name", "")
     passages: List[str] = []
-
+    
     try:
         from neo4j import AsyncGraphDatabase  # type: ignore[import]
 
@@ -80,10 +94,18 @@ async def graph_node(state: AuditState) -> AuditState:
 
         async with AsyncGraphDatabase.driver(uri, auth=auth) as driver:
             async with driver.session() as session:
+                # First try to match by platform ID (direct match)
                 result = await session.run(
                     _CYPHER_TEMPLATE, company_name=company_name
                 )
                 records = await result.data()
+                
+                # If no results, try matching by platform name
+                if not records:
+                    result = await session.run(
+                        _CYPHER_BY_NAME_TEMPLATE, company_name=company_name
+                    )
+                    records = await result.data()
 
         for rec in records:
             platform = rec.get("platform", "")
@@ -102,12 +124,25 @@ async def graph_node(state: AuditState) -> AuditState:
             len(passages),
             company_name,
         )
+        
+        if passages:
+            return {**state, "retrieved_passages": passages}
 
     except Exception as exc:
-        logger.error("Graph node error: %s — raising exception.", exc)
-        raise RuntimeError(
-            f"Neo4j graph traversal failed: {exc}. "
-            "Ensure Neo4j is running and the policy graph is populated."
-        ) from exc
+        logger.warning(
+            "Graph node error: %s — attempting vector fallback.", exc
+        )
 
-    return {**state, "retrieved_passages": passages}
+    # Fallback: Use vector search when Neo4j is unavailable or empty
+    logger.info(
+        "Graph search returned no results for '%s' — falling back to vector search.",
+        company_name,
+    )
+    
+    try:
+        from workflow.nodes.vector_node import vector_node
+        fallback_state = await vector_node(state)
+        return fallback_state
+    except Exception as fallback_exc:
+        logger.error("Vector fallback also failed: %s", fallback_exc)
+        return {**state, "retrieved_passages": []}

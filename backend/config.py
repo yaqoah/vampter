@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Optional
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,13 +36,9 @@ class AppSettings(BaseSettings):
     redis_db: int = Field(0, validation_alias="REDIS_DB")
     redis_password: Optional[SecretStr] = Field(None, validation_alias="REDIS_PASSWORD")
 
-    # Gemini API / GenAI configuration
-    gemini_api_key: Optional[SecretStr] = Field(None, validation_alias="GEMINI_API_KEY")
-    llm_model: str = Field("gemini-1.5-pro", validation_alias="LLM_MODEL")
-    embedding_model: str = Field("text-embedding-004", validation_alias="EMBEDDING_MODEL")
-
-    # Groq AI / LLM failover configuration
-    groq_api_key: Optional[SecretStr] = Field(None, validation_alias="GROQ_API_KEY")
+    # Mistral AI LLM configuration
+    mistral_api_key: Optional[SecretStr] = Field(None, validation_alias="MISTRAL_API_KEY")
+    llm_model: str = Field("mistral-large-latest", validation_alias="LLM_MODEL")
 
     @property
     def redis_url(self) -> str:

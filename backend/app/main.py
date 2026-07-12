@@ -62,7 +62,7 @@ app = FastAPI(
     description=(
         "Asynchronous AI backend for auditing Open Terms Archive software update "
         "policy documents. Combines Redis semantic caching, LangGraph orchestration, "
-        "Qdrant vector retrieval, Neo4j graph traversal, and Gemini Flash generation "
+        "Qdrant vector retrieval, Neo4j graph traversal, and Poolside AI generation "
         "to deliver structured audit reports."
     ),
     version="1.0.0",
@@ -96,10 +96,12 @@ app.include_router(
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    """Pre-warm the LangGraph compiled graph on server startup."""
+    """Pre-warm the LangGraph compiled graph."""
     from workflow.graph import build_audit_graph
+    
     build_audit_graph()
     logger.info("Vampter backend started — LangGraph graph pre-compiled.")
+    # Platform cache is lazily initialized in audit.py when needed
 
 
 @app.on_event("shutdown")

@@ -21,7 +21,7 @@ Execution DAG
                           compress_node    (LLMLingua boilerplate removal)
                                  │
                                  ▼
-                          generate_node   (Gemini Flash + instructor → AuditReport)
+                          generate_node   (Poolside AI → AuditReport)
                                  │
                                  ▼
                                END

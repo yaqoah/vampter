@@ -1,6 +1,6 @@
-'use client'
+﻿'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Search, Zap, Wallet, ScanEye, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -30,6 +30,21 @@ const RADARS = [
   },
 ] as const
 
+const QUICK_CONCERNS = [
+  'Check for hidden fees and auto-renewals',
+  'Data deletion policy details',
+  'Contract lock-in and cancellation terms',
+] as const
+
+// Popular platforms for quick selection (curated list)
+const POPULAR_PLATFORMS = [
+  'Netflix', 'Adobe', 'Spotify', 'Apple', 'Google',
+  'Microsoft', 'Amazon', 'Meta', 'OpenAI', 'Twitter',
+] as const
+
+// Popular platforms to show in Quick Select (filtered from loaded platforms)
+const popularPlatformNames = [...POPULAR_PLATFORMS] as const
+
 interface CommandInputProps {
   onExecute?: (target: string, concern: string, radars: Record<string, boolean>) => void
 }
@@ -44,12 +59,10 @@ export function CommandInput({ onExecute }: CommandInputProps) {
     downgrade: false,
   })
   const [platforms, setPlatforms] = useState<PlatformOption[]>([])
-  const [quickSelectPlatforms, setQuickSelectPlatforms] = useState<PlatformOption[]>([])
   const [filtered, setFiltered] = useState<PlatformOption[]>([])
   const [loadingPlatforms, setLoadingPlatforms] = useState(true)
   const [searchLoading, setSearchLoading] = useState(false)
 
-  // Fetch all platforms for main dropdown
   useEffect(() => {
     let active = true
     async function fetchPlatforms() {
@@ -72,32 +85,6 @@ export function CommandInput({ onExecute }: CommandInputProps) {
       }
     }
     fetchPlatforms()
-    return () => {
-      active = false
-    }
-  }, [])
-
-  // Fetch quick-select platforms (only those with ingested data)
-  useEffect(() => {
-    let active = true
-    async function fetchQuickSelect() {
-      try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-        const res = await fetch(`${apiUrl}/api/v1/platforms/quick-select`)
-        if (res.ok) {
-          const data = await res.json()
-          if (active) {
-            setQuickSelectPlatforms(data || [])
-          }
-        } else {
-          if (active) setQuickSelectPlatforms([])
-        }
-      } catch (err) {
-        console.error('Failed to fetch quick-select platforms:', err)
-        if (active) setQuickSelectPlatforms([])
-      }
-    }
-    fetchQuickSelect()
     return () => {
       active = false
     }
@@ -160,6 +147,14 @@ export function CommandInput({ onExecute }: CommandInputProps) {
     setOpen(false)
   }
 
+  // Quick Select - show popular platforms that are available in loaded platforms
+  const quickSelectPlatforms = useMemo(() => {
+    // Filter loaded platforms to only show popular ones
+    return platforms
+      .filter(p => popularPlatformNames.includes(p.name as typeof popularPlatformNames[number]))
+      .slice(0, 10)  // Show up to 10 popular platforms
+  }, [platforms])
+
   return (
     <div className="relative">
       {/* Glow behind the card */}
@@ -194,7 +189,7 @@ export function CommandInput({ onExecute }: CommandInputProps) {
                 }}
                 onFocus={() => setOpen(true)}
                 onBlur={() => setTimeout(() => setOpen(false), 120)}
-                placeholder="e.g. Netflix, Adobe, Tabby…"
+                placeholder="e.g. Netflix, Adobe, Tabbyâ€¦"
                 autoComplete="off"
                 className="h-12 w-full rounded-xl border border-border/70 bg-background/60 pl-10 pr-4 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-primary/50 focus:ring-2 focus:ring-ring"
               />
@@ -230,7 +225,7 @@ export function CommandInput({ onExecute }: CommandInputProps) {
               )}
             </div>
 
-            {/* Quick selection from platforms with ingested data */}
+            {/* Quick selection from real platform data */}
             {!loadingPlatforms && quickSelectPlatforms.length > 0 && (
               <div className="flex flex-wrap items-center gap-2">
                 <span className="mr-1 font-mono text-[11px] uppercase tracking-widest text-muted-foreground/80">
@@ -257,16 +252,10 @@ export function CommandInput({ onExecute }: CommandInputProps) {
                 ))}
               </div>
             )}
-            {!loadingPlatforms && quickSelectPlatforms.length === 0 && platforms.length > 0 && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground/60">
-                <span className="font-mono uppercase tracking-widest">No pre-seeded platforms</span>
-                <span className="hidden sm:inline"> — select from dropdown to trigger on-demand ingestion</span>
-              </div>
-            )}
             {!loadingPlatforms && platforms.length === 0 && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground/60">
                 <span className="font-mono uppercase tracking-widest">No platforms loaded</span>
-                <span className="hidden sm:inline"> — ensure backend is running</span>
+                <span className="hidden sm:inline"> â€” ensure backend ingestion has run</span>
               </div>
             )}
           </div>
@@ -287,6 +276,26 @@ export function CommandInput({ onExecute }: CommandInputProps) {
               placeholder="What is your main concern? (e.g., 'Fees Check', 'Can I delete my data?', or 'Am I locked into a 12-month contract?'). Leave blank for a full structural vulnerability audit."
               className="w-full resize-y rounded-xl border border-border/70 bg-background/60 px-4 py-3 text-sm leading-relaxed text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-primary/50 focus:ring-2 focus:ring-ring"
             />
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mr-1 font-mono text-[11px] uppercase tracking-widest text-muted-foreground/80">
+                Quick Concerns
+              </span>
+              {QUICK_CONCERNS.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setConcern(preset)}
+                  className={cn(
+                    'rounded-full border px-3 py-1 text-xs font-medium transition-all duration-200',
+                    concern === preset
+                      ? 'border-primary/60 bg-primary/15 text-primary'
+                      : 'border-border/70 bg-background/40 text-muted-foreground hover:border-primary/40 hover:text-foreground'
+                  )}
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Lower: vampire radar toggles */}

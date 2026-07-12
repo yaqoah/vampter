@@ -37,8 +37,9 @@ export function AuditConsole() {
       .map(([key]) => key)
 
     try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/audit`,
+        `${apiUrl}/api/v1/audit`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

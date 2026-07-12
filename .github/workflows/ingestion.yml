@@ -1,0 +1,80 @@
+name: Vampter Ingestion
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: 'Platforms per batch'
+        required: false
+        default: '50'
+      max_platforms:
+        description: 'Override batch size with specific max limit'
+        required: false
+      resume:
+        description: 'Resume from checkpoint'
+        required: false
+        default: 'true'
+  schedule:
+    # Run every 7 hours: 0,7,14,21 * * * *
+    - cron: '0 0,7,14,21 * * *'
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # Max 6 hours (360 minutes)
+    
+    steps:
+    - uses: actions/checkout@v4
+     
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        cd backend
+        pip install -r requirements.txt
+    
+    - name: Run ingestion
+      id: ingest
+      run: |
+        cd backend
+        # Get batch size from input or default
+        BATCH_SIZE=${{ inputs.batch_size || '50' }}
+        MAX_PLATFORMS=${{ inputs.max_platforms }}
+        
+        # Determine max_platforms parameter
+        if [ -n "$MAX_PLATFORMS" ]; then
+          PARAMS="--max-platforms $MAX_PLATFORMS"
+        else
+          PARAMS="--max-platforms $BATCH_SIZE"
+        fi
+        
+        # Add resume flag
+        if [ "${{ inputs.resume }}" == "true" ]; then
+          PARAMS="$PARAMS --resume"
+        fi
+        
+        # Run ingestion
+        python -m ingestion.run_ingestion $PARAMS
+      env:
+        MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Save checkpoint
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ingestion-checkpoint
+        path: backend/ingestion_checkpoint.json
+        retention-days: 30
+    
+    - name: Log summary
+      if: always()
+      run: |
+        cd backend
+        echo "=== INGESTION STATUS ==="
+        if [ -f ingestion_checkpoint.json ]; then
+          cat ingestion_checkpoint.json
+        fi
