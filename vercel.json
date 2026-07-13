@@ -1,0 +1,13 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/backend/app/main.py"
+    }
+  ],
+  "functions": {
+    "backend/app/main.py": {
+      "maxDuration": 300
+    }
+  }
+}

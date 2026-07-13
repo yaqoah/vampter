@@ -54,7 +54,7 @@ export function CommandInput({ onExecute }: CommandInputProps) {
     let active = true
     async function fetchPlatforms() {
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
         const res = await fetch(`${apiUrl}/api/v1/platforms`)
         if (res.ok) {
           const data = await res.json()
@@ -82,7 +82,7 @@ export function CommandInput({ onExecute }: CommandInputProps) {
     let active = true
     async function fetchQuickSelect() {
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
         const res = await fetch(`${apiUrl}/api/v1/platforms/quick-select`)
         if (res.ok) {
           const data = await res.json()
@@ -122,7 +122,7 @@ export function CommandInput({ onExecute }: CommandInputProps) {
     }
     setSearchLoading(true)
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
       const res = await fetch(`${apiUrl}/api/v1/platforms/search?q=${encodeURIComponent(query)}`)
       if (res.ok) {
         const data = await res.json()

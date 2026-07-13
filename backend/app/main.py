@@ -110,6 +110,17 @@ async def on_shutdown() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Mangum handler for Vercel serverless deployment
+# ---------------------------------------------------------------------------
+
+from mangum import Mangum
+
+# Create AWS Lambda/ALB handler for serverless deployment
+# This wraps the FastAPI app for Vercel's serverless functions
+handler = Mangum(app)
+
+
+# ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------
 
