@@ -49,7 +49,7 @@ the unconstrained ``SimpleLLMPathExtractor``.
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Literal
 
 from llama_index.core.indices.property_graph import SchemaLLMPathExtractor
 from llama_index.core.llms import LLM
@@ -60,18 +60,9 @@ logger = logging.getLogger(__name__)
 # Ontology Definitions
 # ---------------------------------------------------------------------------
 
-ENTITY_TYPES = [
-    "Platform",
-    "Document", 
-    "Revision",
-    "Clause",
-]
+ENTITY_TYPES = Literal["Platform", "Document", "Revision", "Clause"]
 
-RELATION_TYPES = [
-    "TRACKS_POLICY",
-    "HAS_REVISION_VERSION",
-    "CONTAINS_CLAUSE",
-]
+RELATION_TYPES = Literal["TRACKS_POLICY", "HAS_REVISION_VERSION", "CONTAINS_CLAUSE"]
 
 # ---------------------------------------------------------------------------
 # System prompt injection

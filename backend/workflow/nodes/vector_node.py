@@ -56,12 +56,23 @@ async def vector_node(state: AuditState) -> AuditState:
         embed_model = LlamaSettings.embed_model
         query_embedding = embed_model.get_text_embedding(query)
 
-        client = AsyncQdrantClient(
-            host=settings.qdrant_host,
-            port=settings.qdrant_port,
-            grpc_port=settings.qdrant_port_grpc,
-            prefer_grpc=True,
-        )
+        # Build the client connection - prioritize Qdrant Cloud URL
+        # If QDRANT_URL is set (Qdrant Cloud), use it; otherwise use localhost
+        if settings.qdrant_url:
+            client = AsyncQdrantClient(
+                url=settings.qdrant_url,
+                prefer_grpc=False,  # REST is more reliable for cloud
+                api_key=settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else None,
+            )
+            logger.info("Connected to Qdrant Cloud: %s", settings.qdrant_url[:40] + "...")
+        else:
+            client = AsyncQdrantClient(
+                host=settings.qdrant_host,
+                port=settings.qdrant_port,
+                grpc_port=settings.qdrant_port_grpc,
+                prefer_grpc=True,
+            )
+            logger.info("Connected to local Qdrant: %s:%s", settings.qdrant_host, settings.qdrant_port)
 
         # Ensure collection exists - auto-create if missing
         # BAAI/bge-small-en-v1.5 embeddings: 384 dimensions, Cosine distance
@@ -81,60 +92,21 @@ async def vector_node(state: AuditState) -> AuditState:
             )
 
         # Optional: filter by company / platform metadata if present.
+        # NOTE: We skip Qdrant-side filtering because it requires pre-created indexes.
+        # Instead, we perform similarity search without filter and filter results in Python.
         search_filter = None
-        if company_name:
-            # First, try to resolve company_name to platform ID for filtering
-            # by querying Neo4j to map name to ID
-            try:
-                from neo4j import AsyncGraphDatabase
-                auth = (settings.neo4j_user, settings.neo4j_password.get_secret_value())
-                async with AsyncGraphDatabase.driver(settings.neo4j_uri, auth=auth) as driver:
-                    async with driver.session() as session:
-                        # Try finding Platform node first (full ingestion)
-                        result = await session.run(
-                            "MATCH (p:Platform) WHERE toLower(p.name) CONTAINS toLower($name) RETURN p.id AS id LIMIT 1",
-                            name=company_name
-                        )
-                        record = await result.single()
-                        if record and record["id"]:
-                            platform_id = record["id"]
-                            search_filter = Filter(
-                                should=[
-                                    FieldCondition(
-                                        key="metadata.platform",
-                                        match=MatchText(text=platform_id),
-                                    ),
-                                    FieldCondition(
-                                        key="properties.platform",
-                                        match=MatchText(text=platform_id),
-                                    ),
-                                ]
-                            )
-            except Exception:
-                pass
-            
-            # If no Platform node found, try direct filter (seed data compatibility)
-            if not search_filter:
-                search_filter = Filter(
-                    should=[
-                        FieldCondition(
-                            key="metadata.platform",
-                            match=MatchText(text=company_name.lower()),
-                        ),
-                        FieldCondition(
-                            key="properties.platform",
-                            match=MatchText(text=company_name.lower()),
-                        ),
-                    ]
-                )
 
         # Use query_points for modern Qdrant client API (v1.7.0+)
         response = await client.query_points(
             collection_name="vampter_docs",
             query=query_embedding,
-            limit=8,
+            limit=20,  # Get more results for potential filtering
             query_filter=search_filter,
         )
+
+        logger.info(f"DEBUG: Response points: {len(response.points) if response.points else 0}")
+        if response.points:
+            logger.info(f"DEBUG: First point payload keys: {list(response.points[0].payload.keys()) if response.points[0].payload else 'none'}")
 
         passages = []
         for point in response.points:
@@ -201,10 +173,14 @@ async def vector_node(state: AuditState) -> AuditState:
         await client.close()
 
     except Exception as exc:
-        logger.error("Vector node error: %s — raising exception.", exc)
-        raise RuntimeError(
-            f"Qdrant vector search failed: {exc}. "
-            "Ensure Qdrant is running and the 'vampter_docs' collection is populated."
-        ) from exc
+        logger.warning("Vector node error: %s — returning empty passages.", exc)
+        return {**state, "retrieved_passages": []}
+
+    # If vector search returned no passages, fall back to graph search
+    if not passages:
+        logger.info("Vector node returned no results, falling back to graph_node")
+        # Import here to avoid circular import at module load
+        from workflow.nodes.graph_node import graph_node
+        return await graph_node(state)
 
     return {**state, "retrieved_passages": passages}

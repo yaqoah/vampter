@@ -143,7 +143,12 @@ class SemanticCache:
             Deserialised cached payload if a hit is found, else ``None``.
         """
         t0 = time.monotonic()
-        client = await get_async_client()
+        
+        try:
+            client = await get_async_client()
+        except Exception as exc:
+            logger.debug("Redis unavailable for cache lookup: %s", exc)
+            return None
 
         try:
             emb_key = _vec_key(company_name)
@@ -185,8 +190,14 @@ class SemanticCache:
             )
             return None
 
+        except Exception as exc:
+            logger.debug("Cache lookup failed: %s", exc)
+            return None
         finally:
-            await client.aclose()
+            try:
+                await client.aclose()
+            except Exception:
+                pass
 
     async def store(
         self,
@@ -206,7 +217,12 @@ class SemanticCache:
         payload:
             Serialisable dict representing the ``AuditReport``.
         """
-        client = await get_async_client()
+        try:
+            client = await get_async_client()
+        except Exception as exc:
+            logger.debug("Redis unavailable for cache store: %s", exc)
+            return
+        
         try:
             field = _hash_vector(query_vector)
             emb_key = _vec_key(company_name)
@@ -222,5 +238,10 @@ class SemanticCache:
             logger.debug(
                 "Cache STORE  company='%s'  field=%s", company_name, field[:12]
             )
+        except Exception as exc:
+            logger.debug("Cache store failed: %s", exc)
         finally:
-            await client.aclose()
+            try:
+                await client.aclose()
+            except Exception:
+                pass

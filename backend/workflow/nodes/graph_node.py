@@ -34,32 +34,104 @@ logger = logging.getLogger(__name__)
 # Cypher query — full 4-hop traversal aligned to ingestion graph schema
 # ---------------------------------------------------------------------------
 
+# Match Chunk nodes (LlamaIndex PropertyGraphStore default label)
 _CYPHER_TEMPLATE = """
+MATCH (n:Chunk)
+WHERE n.text IS NOT NULL
+  AND toLower(n.text) CONTAINS toLower($company_name)
+RETURN
+    n.name        AS platform,
+    n.text        AS clause_text
+LIMIT 50
+"""
+
+# Query for any node with text (fallback)
+_CYPHER_ANY_TEMPLATE = """
+MATCH (n)
+WHERE n.text IS NOT NULL
+  AND toLower(n.text) CONTAINS toLower($company_name)
+RETURN
+    coalesce(n.name, '') AS platform,
+    n.text                AS clause_text
+LIMIT 50
+"""
+
+# Query for Platform-Revision-Clause path (when schema exists)
+_CYPHER_PLATFORM_PATH_TEMPLATE = """
+MATCH (p:Platform)-[:TRACKS_POLICY]->(d:Document)-[:HAS_REVISION_VERSION]->(r:Revision)-[:CONTAINS_CLAUSE]->(c:Clause)
+WHERE toLower(toString(p.name)) CONTAINS toLower($company_name)
+RETURN
+    p.name + ': ' + c.text AS clause_text
+LIMIT 50
+"""
+
+# Query by _properties field (LlamaIndex PropertyGraphStore stores metadata here)
+_CYPHER_BY_PROPS_TEMPLATE = """
+MATCH (n)
+WHERE n._properties IS NOT NULL
+  AND toLower(toString(apoc.text.join(keys(n._properties), ''))) CONTAINS toLower($company_name)
+RETURN
+    n.name AS platform,
+    n.text AS clause_text
+LIMIT 50
+"""
+
+# Query for Clause nodes specifically (from SchemaLLMPathExtractor)
+_CYPHER_CLAUSE_TEMPLATE = """
+MATCH (c:Clause)
+WHERE toLower(toString(c.text)) CONTAINS toLower($company_name)
+RETURN c.text AS clause_text
+LIMIT 50
+"""
+
+# Query for Document nodes specifically
+_CYPHER_DOC_CLAUSE_TEMPLATE = """
+MATCH (d:Document)-[:CONTAINS_CLAUSE]->(c:Clause)
+WHERE toLower(toString(d.name)) CONTAINS toLower($company_name)
+   OR toLower(toString(d.platform)) CONTAINS toLower($company_name)
+RETURN c.text AS clause_text
+LIMIT 50
+"""
+
+# Full path: Platform -> Document -> Revision -> Clause
+_CYPHER_FULL_PATH_TEMPLATE = """
+MATCH (p:Platform)-[:TRACKS_POLICY]->(d:Document)-[:HAS_REVISION_VERSION]->(r:Revision)-[:CONTAINS_CLAUSE]->(c:Clause)
+WHERE toLower(toString(p.name)) CONTAINS toLower($company_name)
+RETURN
+    p.name + ': ' + c.text AS clause_text
+LIMIT 50
+"""
+
+# Document nodes (seed data compatibility)
+_CYPHER_BY_DOCUMENT_TEMPLATE = """
 MATCH (n:Document)
 WHERE toLower(n.platform) CONTAINS toLower($company_name)
 RETURN
     n.platform    AS platform,
-    n.name        AS document,
-    n.revision    AS revision,
-    n.clause_id   AS clause_id,
     n.text        AS clause_text
-ORDER BY n.revision DESC, n.clause_id ASC
 LIMIT 50
 """
 
-# Alternative query that matches by platform name when ID doesn't match
+# Query by Platform name when ID doesn't match
 _CYPHER_BY_NAME_TEMPLATE = """
 MATCH (p:Platform)
 WHERE toLower(p.name) CONTAINS toLower($company_name)
-MATCH (n:Document)
-WHERE n.platform = p.id OR n.platform CONTAINS p.name
+MATCH (n)
+WHERE toLower(n.text) CONTAINS toLower(p.id)
 RETURN
-    n.platform    AS platform,
-    n.name        AS document,
-    n.revision    AS revision,
-    n.clause_id   AS clause_id,
-    n.text        AS clause_text
-ORDER BY n.revision DESC, n.clause_id ASC
+    p.id        AS platform,
+    n.text      AS clause_text
+LIMIT 50
+"""
+
+# Fallback: Any node with text property containing platform name
+_CYPHER_FALLBACK_TEMPLATE = """
+MATCH (n)
+WHERE (n.text IS NOT NULL OR n.name IS NOT NULL)
+  AND toLower(toString(n.text)) CONTAINS toLower($company_name)
+RETURN
+    coalesce(n.platform, n.name)    AS platform,
+    n.text                          AS clause_text
 LIMIT 50
 """
 
@@ -94,30 +166,89 @@ async def graph_node(state: AuditState) -> AuditState:
 
         async with AsyncGraphDatabase.driver(uri, auth=auth) as driver:
             async with driver.session() as session:
-                # First try to match by platform ID (direct match)
-                result = await session.run(
-                    _CYPHER_TEMPLATE, company_name=company_name
-                )
-                records = await result.data()
+                records = []
                 
-                # If no results, try matching by platform name
-                if not records:
-                    result = await session.run(
-                        _CYPHER_BY_NAME_TEMPLATE, company_name=company_name
+                # Debug: Show what labels exist in the database
+                try:
+                    debug_result = await session.run(
+                        "MATCH (n) RETURN DISTINCT labels(n) AS labels LIMIT 10"
                     )
+                    label_records = await debug_result.data()
+                    seen_labels = set()
+                    for lr in label_records:
+                        if lr.get("labels"):
+                            seen_labels.update(lr["labels"])
+                    logger.info("DEBUG: Neo4j labels found: %s", list(seen_labels))
+                except Exception as e:
+                    logger.debug("Debug label query failed: %s", e)
+                
+                # Pattern 1: Match nodes with text containing company name
+                try:
+                    result = await session.run(_CYPHER_TEMPLATE, company_name=company_name)
                     records = await result.data()
+                    if records:
+                        logger.info("Graph query matched via text search - found %d records", len(records))
+                        logger.info("DEBUG: Sample record keys: %s", list(records[0].keys()) if records else "none")
+                except Exception as e:
+                    logger.debug("Pattern 1 failed: %s", e)
+                
+                # Pattern 2: Document nodes with category field (seed data format)
+                if not records:
+                    try:
+                        result = await session.run(
+                            _CYPHER_BY_DOCUMENT_TEMPLATE, company_name=company_name
+                        )
+                        records = await result.data()
+                        if records:
+                            logger.info("Graph query matched via Document nodes")
+                    except Exception as e:
+                        logger.debug("Pattern 2 failed: %s", e)
+                
+                # Pattern 3: Full path traversal (Platform -> Document -> Revision -> Clause)
+                if not records:
+                    try:
+                        result = await session.run(
+                            _CYPHER_FULL_PATH_TEMPLATE, company_name=company_name
+                        )
+                        records = await result.data()
+                        if records:
+                            logger.info("Graph query matched via full path traversal")
+                    except Exception as e:
+                        logger.debug("Pattern 3 failed: %s", e)
+                
+                # Pattern 4: Match by Platform name
+                if not records:
+                    try:
+                        result = await session.run(
+                            _CYPHER_BY_NAME_TEMPLATE, company_name=company_name
+                        )
+                        records = await result.data()
+                        if records:
+                            logger.info("Graph query matched via Platform name")
+                    except Exception as e:
+                        logger.debug("Pattern 4 failed: %s", e)
+                
+                # Pattern 5: Fallback - any node with text
+                if not records:
+                    try:
+                        result = await session.run(
+                            _CYPHER_FALLBACK_TEMPLATE, company_name=company_name
+                        )
+                        records = await result.data()
+                        if records:
+                            logger.info("Graph query matched via fallback")
+                    except Exception as e:
+                        logger.debug("Pattern 5 failed: %s", e)
 
         for rec in records:
-            platform = rec.get("platform", "")
-            document = rec.get("document", "")
-            revision = rec.get("revision", "")
-            clause_id = rec.get("clause_id", "")
-            clause_text = rec.get("clause_text", "")
-
-            passage = (
-                f"[{platform}] {document} ({revision}) — {clause_id}: {clause_text}"
-            )
-            passages.append(passage)
+            clause_text = rec.get("clause_text", "") or rec.get("text", "")
+            if clause_text:
+                text_str = str(clause_text).strip()
+                if len(text_str) > 50:  # Only keep substantive chunks
+                    passages.append(text_str)
+                    # Log first passage content for debugging
+                    if len(passages) == 1:
+                        logger.info("DEBUG: First passage preview: %s...", text_str[:200].replace('\n', ' '))
 
         logger.info(
             "Graph node retrieved %d clause(s) for company='%s'",

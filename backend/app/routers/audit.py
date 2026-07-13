@@ -42,7 +42,11 @@ from workflow.state import AuditReport
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-_cache = SemanticCache(threshold=0.92)
+# Disable cache for local development if REDIS_DISABLED is set
+if os.getenv("REDIS_DISABLED", "false").lower() in ("true", "1", "yes"):
+    _cache = None
+else:
+    _cache = SemanticCache(threshold=0.92)
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +87,7 @@ async def get_platforms() -> list[dict]:
 async def get_quick_select_platforms() -> list[dict]:
     """
     Fetch a list of platforms with ingested policy data for Quick Select.
-    Only returns platforms that have actual Document data.
+    Only returns platforms that have actual data in Neo4j.
     """
     try:
         from neo4j import AsyncGraphDatabase
@@ -91,10 +95,12 @@ async def get_quick_select_platforms() -> list[dict]:
         auth = (settings.neo4j_user, settings.neo4j_password.get_secret_value())
         async with AsyncGraphDatabase.driver(settings.neo4j_uri, auth=auth) as driver:
             async with driver.session() as session:
+                # Check for nodes with text content (LlamaIndex format)
                 cypher_query = """
-                MATCH (d:Document)
-                RETURN DISTINCT d.platform AS name
-                ORDER BY d.platform
+                MATCH (n) WHERE n.text IS NOT NULL
+                RETURN DISTINCT n.name AS name
+                ORDER BY n.name
+                LIMIT 100
                 """
                 result = await session.run(cypher_query)
                 records = await result.data()
@@ -102,9 +108,18 @@ async def get_quick_select_platforms() -> list[dict]:
                 if records:
                     platforms = [{"id": rec.get("name", ""), "name": rec.get("name", "")} for rec in records]
                     return platforms
+                
+                # Fallback: check Platform nodes (seed data format)
+                result = await session.run(
+                    "MATCH (p:Platform) RETURN p.id AS id, p.name AS name ORDER BY p.id"
+                )
+                records = await result.data()
+                if records:
+                    platforms = [{"id": rec.get("id", ""), "name": rec.get("name", rec.get("id", ""))} for rec in records]
+                    return platforms
     except Exception as exc:
         logger.warning("Neo4j unavailable for quick-select: %s", exc)
-    
+
     return []
 
 
@@ -137,6 +152,57 @@ async def search_platforms(q: str = Query(..., min_length=1, max_length=100)) ->
         logger.warning("Platform search failed: %s", exc)
     
     return []
+
+
+@router.get(
+    "/debug/neo4j",
+    summary="Debug Neo4j node structure",
+    description="Inspect actual Neo4j node labels and properties for debugging."
+)
+async def debug_neo4j() -> dict:
+    """
+    Debug endpoint to inspect Neo4j node structure.
+    """
+    try:
+        from neo4j import AsyncGraphDatabase
+        
+        auth = (settings.neo4j_user, settings.neo4j_password.get_secret_value())
+        async with AsyncGraphDatabase.driver(settings.neo4j_uri, auth=auth) as driver:
+            async with driver.session() as session:
+                # Get all unique labels
+                labels_result = await session.run(
+                    "CALL db.labels() YIELD label RETURN label"
+                )
+                labels = [rec["label"] for rec in await labels_result.data()]
+                
+                # Get sample nodes with properties
+                sample_result = await session.run(
+                    "MATCH (n) RETURN n.name AS name, n.text AS text, n._properties AS props, labels(n) AS labels LIMIT 5"
+                )
+                samples = []
+                async for rec in sample_result:
+                    sample = {
+                        "name": rec.get("name"),
+                        "text_preview": rec.get("text", "")[:100] if rec.get("text") else None,
+                        "labels": list(rec.get("labels", [])) if rec.get("labels") else [],
+                        "props_keys": list(rec.get("props", {}).keys()) if rec.get("props") else [],
+                    }
+                    samples.append(sample)
+                
+                # Get relationship types
+                rel_result = await session.run(
+                    "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType"
+                )
+                relationships = [rec["relationshipType"] for rec in await rel_result.data()]
+        
+        return {
+            "labels": labels,
+            "relationships": relationships,
+            "sample_nodes": samples,
+            "node_count": len(samples),
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
 
 
 # ---------------------------------------------------------------------------
@@ -197,48 +263,54 @@ def _build_cache_key_text(company_name: str, query: str, intents: List[str]) -> 
 
 async def _ensure_company_ingested(company_name: str) -> bool:
     """
-    Check if company has ingested data. If not, trigger on-demand ingestion.
+    Check if company has ingested data in Neo4j or Qdrant.
     
-    Parameters
-    ----------
-    company_name:
-        Target company to check/ingest.
-        
-    Returns
-    -------
-    bool
-        True if data exists (or was ingested), False on failure.
+    No longer triggers on-demand ingestion - only checks for existing data.
+    If no data exists, the audit will return an informative message.
+    
+    Returns True if data exists, False otherwise.
     """
     from neo4j import AsyncGraphDatabase
     
-    # Check Neo4j for existing Document data
+    # Check Neo4j for any nodes with text content (LlamaIndex PropertyGraphStore format)
     try:
         auth = (settings.neo4j_user, settings.neo4j_password.get_secret_value())
         async with AsyncGraphDatabase.driver(settings.neo4j_uri, auth=auth) as driver:
             async with driver.session() as session:
+                # Check for any nodes that might contain platform-related text
                 result = await session.run(
-                    "MATCH (d:Document) WHERE toLower(d.platform) CONTAINS toLower($company) RETURN count(d) AS count",
+                    "MATCH (n) WHERE (n.text IS NOT NULL OR n.name IS NOT NULL) "
+                    "AND toLower(toString(coalesce(n.text, n.name))) CONTAINS toLower($company) "
+                    "RETURN count(n) AS count LIMIT 1",
                     company=company_name
                 )
                 record = await result.single()
                 if record and record["count"] > 0:
-                    logger.info("Found %d existing documents for company='%s'", record["count"], company_name)
+                    logger.info("Found %d existing nodes for company='%s'", record["count"], company_name)
                     return True
     except Exception as exc:
         logger.warning("Neo4j check failed: %s", exc)
     
-    # No data exists - trigger on-demand ingestion
-    logger.info("No data found for company='%s' — triggering on-demand ingestion...", company_name)
+    # Also check Qdrant for vector data
     try:
-        from ingestion.pipeline import ingest_company_on_demand
-        success = await ingest_company_on_demand(company_name)
-        if success:
-            logger.info("On-demand ingestion completed for company='%s'", company_name)
-            return True
-        return False
+        from qdrant_client import AsyncQdrantClient
+        qc = AsyncQdrantClient(
+            url=settings.qdrant_url if settings.qdrant_url else None,
+            host=settings.qdrant_host if not settings.qdrant_url else None,
+            api_key=settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else None,
+        )
+        collections = await qc.get_collections()
+        if any(c.name == "vampter_docs" for c in collections.collections):
+            count_result = await qc.count(collection_name="vampter_docs")
+            if count_result.count > 0:
+                logger.info("Found %d vectors in Qdrant", count_result.count)
+                return True
+            else:
+                logger.info("Qdrant collection exists but is empty")
     except Exception as exc:
-        logger.error("On-demand ingestion failed for company='%s': %s", company_name, exc)
-        return False
+        logger.warning("Qdrant check failed: %s", exc)
+    
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +375,7 @@ async def run_audit(request: AuditRequest) -> AuditReport:
     query_vector = _embed_query(cache_key_text)
 
     # ── Step 2: Semantic cache check ────────────────────────────────────────
-    if not bypass_cache and query_vector is not None:
+    if _cache and not bypass_cache and query_vector is not None:
         cached = await _cache.lookup(
             company_name=request.company_name,
             query_vector=query_vector,
@@ -339,7 +411,7 @@ async def run_audit(request: AuditRequest) -> AuditReport:
 
     # ── Step 4: Store result in cache ───────────────────────────────────────
     # Only cache non-empty reports to avoid caching empty results
-    if query_vector is not None and report.vulnerability_score > 0.0:
+    if _cache and query_vector is not None and report.vulnerability_score > 0.0:
         try:
             await _cache.store(
                 company_name=request.company_name,

@@ -12,9 +12,12 @@ Fetch platform data from OTA version repositories and yield typed
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import time
 import urllib.parse
+from pathlib import Path
 from typing import List, Optional
 
 import httpx
@@ -22,6 +25,24 @@ from llama_index.core import Document
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+# Persistent cache file for platforms
+PLATFORM_CACHE_FILE = Path("platform_cache.json")
+
+
+def _load_platform_cache() -> dict:
+    """Load cached platforms from disk."""
+    if PLATFORM_CACHE_FILE.exists():
+        try:
+            return json.loads(PLATFORM_CACHE_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def _save_platform_cache(cache: dict) -> None:
+    """Save platforms cache to disk."""
+    PLATFORM_CACHE_FILE.write_text(json.dumps(cache))
 
 
 # ---------------------------------------------------------------------------
@@ -54,14 +75,32 @@ class OTASettings(BaseModel):
 
 def _get_github_auth_headers() -> dict:
     """Extract GitHub auth headers from environment."""
-    token = os.getenv("GITHUB_TOKEN")
+    # Check each token source
+    token = None
+    token_source = None
+    
+    if os.getenv("TOKEN"):
+        token = os.getenv("TOKEN")
+        token_source = "TOKEN"
+    elif os.getenv("GITHUB_PAT"):
+        token = os.getenv("GITHUB_PAT")
+        token_source = "GITHUB_PAT"
+    elif os.getenv("GITHUB_TOKEN"):
+        token = os.getenv("GITHUB_TOKEN")
+        token_source = "GITHUB_TOKEN"
+    
+    headers = {
+        "User-Agent": "Vampter-App",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    
     if token:
-        return {
-            "User-Agent": "Vampter-App",
-            "Authorization": f"Bearer {token}",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-    return {"User-Agent": "Vampter-App"}
+        logger.info("Using GitHub token from %s (length: %d)", token_source, len(token))
+        headers["Authorization"] = f"token {token}"
+    else:
+        logger.warning("No GitHub token found - will use unauthenticated requests (rate limited)")
+    
+    return headers
 
 # Document type mappings for OTA naming conventions
 DOCUMENT_TYPE_MAPPINGS = {
@@ -92,6 +131,11 @@ class OpenTermsArchiveClient:
         if self._dir_cache:
             return
         
+        # Use cached platform data first
+        if self._services_cache:
+            logger.info("Using already cached platform data (%d platforms)", len(self._services_cache))
+            return
+        
         github_client = httpx.AsyncClient(
             base_url="https://api.github.com",
             timeout=self._settings.timeout,
@@ -106,6 +150,28 @@ class OpenTermsArchiveClient:
                         f"/repos/{repo}/contents",
                         params={"per_page": 100, "page": page}
                     )
+                    
+                    if response.status_code == 403:
+                        # Rate limit hit - wait and retry with exponential backoff
+                        reset_time = response.headers.get("X-RateLimit-Reset")
+                        if reset_time:
+                            wait_seconds = max(0, int(reset_time) - int(time.time()))
+                            # Cap wait at 60 seconds for each retry
+                            actual_wait = min(wait_seconds, 60)
+                            logger.warning("Rate limited on %s. Waiting %d seconds...", repo, actual_wait)
+                            if actual_wait > 0:
+                                await asyncio.sleep(actual_wait + 1)
+                            # Try once more
+                            response = await github_client.get(
+                                f"/repos/{repo}/contents",
+                                params={"per_page": 100, "page": page}
+                            )
+                        
+                        if response.status_code != 200:
+                            logger.warning("Still failing after rate limit wait on %s", repo)
+                            break
+                        continue  # Retry the same page
+                    
                     if response.status_code != 200:
                         logger.warning("Failed to fetch from %s: status %s", repo, response.status_code)
                         break
@@ -169,6 +235,12 @@ class OpenTermsArchiveClient:
                         f"/repos/{repo}/contents",
                         params={"per_page": 100, "page": page}
                     )
+                    
+                    if response.status_code == 403:
+                        # May be rate limited
+                        logger.warning("Rate limited on %s - skipping (status 403)", repo)
+                        break
+                    
                     if response.status_code != 200:
                         logger.warning("Failed to fetch from %s: status %s", repo, response.status_code)
                         break
@@ -215,9 +287,13 @@ class OpenTermsArchiveClient:
         List[dict]
             Platform records: [{"id": "netflix", "name": "Netflix"}, ...]
         """
-        # Use cached data if available
-        if self._services_cache:
-            return list(self._services_cache.values())
+        # Try to load from persistent cache first
+        cached_platforms = _load_platform_cache()
+        if cached_platforms:
+            logger.info("Loaded %d platforms from persistent cache", len(cached_platforms))
+            self._services_cache = cached_platforms
+            self._dir_cache = {p["id"]: p.get("dir_name", p["id"]) for p in cached_platforms.values()}
+            return self._get_cached_services()
         
         platforms = {}
         
@@ -236,6 +312,12 @@ class OpenTermsArchiveClient:
                         f"/repos/{repo}/contents",
                         params={"per_page": 100, "page": page}
                     )
+                    
+                    if response.status_code == 403:
+                        # Rate limited - skip this repo but continue
+                        logger.warning("Rate limited on %s - skipping (status 403)", repo)
+                        break
+                    
                     if response.status_code != 200:
                         logger.warning("Failed to fetch from %s: status %s", repo, response.status_code)
                         break
@@ -266,6 +348,7 @@ class OpenTermsArchiveClient:
             # Populate both caches
             self._dir_cache.update({p["id"]: p["dir_name"] for p in platforms_list})
             self._services_cache.update({p["id"]: p for p in platforms_list})
+            _save_platform_cache(self._services_cache)
             logger.info("Fetched %d unique platforms from OTA GitHub repos", len(platforms_list))
             return platforms_list
             
@@ -274,6 +357,10 @@ class OpenTermsArchiveClient:
             return []
         finally:
             await github_client.aclose()
+    
+    def _get_cached_services(self) -> List[dict]:
+        """Return cached services list."""
+        return list(self._services_cache.values())
 
     async def fetch_document_versions(
         self,

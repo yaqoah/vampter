@@ -260,7 +260,7 @@ export function CommandInput({ onExecute }: CommandInputProps) {
             {!loadingPlatforms && quickSelectPlatforms.length === 0 && platforms.length > 0 && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground/60">
                 <span className="font-mono uppercase tracking-widest">No pre-seeded platforms</span>
-                <span className="hidden sm:inline"> — select from dropdown to trigger on-demand ingestion</span>
+                <span className="hidden sm:inline"> — run ingestion to populate available platforms</span>
               </div>
             )}
             {!loadingPlatforms && platforms.length === 0 && (

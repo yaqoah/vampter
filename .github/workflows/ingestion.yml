@@ -34,12 +34,24 @@ jobs:
     - name: Install dependencies
       run: |
         cd backend
+        # Remove .env if it exists to ensure env vars are used (especially for cloud secrets)
+        rm -f .env
         pip install -r requirements.txt
+    
+    - name: Download previous checkpoint
+      if: always()
+      uses: actions/download-artifact@v4
+      with:
+        name: ingestion-checkpoint
+        path: backend
+      continue-on-error: true  # First run won't have checkpoint
     
     - name: Run ingestion
       id: ingest
       run: |
         cd backend
+        # Clear proxy environment variables to prevent httpx issues
+        unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY
         # Get batch size from input or default
         BATCH_SIZE=${{ inputs.batch_size || '50' }}
         MAX_PLATFORMS=${{ inputs.max_platforms }}
@@ -60,14 +72,21 @@ jobs:
         python -m ingestion.run_ingestion $PARAMS
       env:
         MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TOKEN: ${{ secrets.TOKEN }}
+        NEO4J_URI: ${{ secrets.NEO4J_URI }}
+        NEO4J_USER: ${{ secrets.NEO4J_USER }}
+        NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
+        QDRANT_URL: ${{ secrets.QDRANT_URL }}
+        QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
     
     - name: Save checkpoint
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: ingestion-checkpoint
-        path: backend/ingestion_checkpoint.json
+        path: |
+          backend/ingestion_checkpoint.json
+          backend/platform_cache.json
         retention-days: 30
     
     - name: Log summary
