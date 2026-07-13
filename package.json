@@ -1,0 +1,5 @@
+{
+  "name": "vampter-monorepo",
+  "private": true,
+  "workspaces": []
+}
