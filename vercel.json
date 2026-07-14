@@ -12,9 +12,11 @@
       "src": "backend/main.py",
       "use": "@vercel/python",
       "config": {
+        "rootDir": "backend",
         "includeFiles": [
           "backend/**/*.py",
-          "backend/**/*.toml"
+          "backend/**/*.toml",
+          "backend/requirements.txt"
         ]
       }
     }
