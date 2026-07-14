@@ -232,7 +232,8 @@ async def _main(args: argparse.Namespace) -> int:
         logger.error("Pipeline raised an unexpected exception: %s", exc, exc_info=True)
         return 2
 
-    if result.documents_loaded == 0:
+    # For clear-only mode, documents_loaded=0 is expected - don't treat as error
+    if result.documents_loaded == 0 and not args.clear_only:
         logger.error(
             "No documents were successfully fetched from URL '%s'.", args.api_url
         )
@@ -240,6 +241,11 @@ async def _main(args: argparse.Namespace) -> int:
             "Ensure the API is reachable and returning a valid JSON list."
         )
         return 1
+    
+    # For clear-only mode, print success message
+    if args.clear_only:
+        logger.info("Successfully cleared platform '%s' from databases.", args.clear_only)
+        return 0
 
     logger.info(_SEP)
     logger.info("  INGESTION SUMMARY")
