@@ -16,8 +16,8 @@ Suitable for queries involving cross-revision contradictions, policy
 change histories, or structural analysis that requires navigating the
 full document lineage chain.
 
-If Neo4j is unavailable or unpopulated, falls back gracefully to
-the vector search path with a warning.
+If no data is found, returns empty passages (no fallback) to prevent
+infinite loops in the workflow.
 """
 
 from __future__ import annotations
@@ -67,11 +67,12 @@ LIMIT 50
 
 # Query by _properties field (LlamaIndex PropertyGraphStore stores metadata here)
 _CYPHER_BY_PROPS_TEMPLATE = """
-MATCH (n)
+MATCH (n:Chunk)
 WHERE n._properties IS NOT NULL
-  AND toLower(toString(apoc.text.join(keys(n._properties), ''))) CONTAINS toLower($company_name)
+  AND n._properties.platform IS NOT NULL
+  AND toLower(toString(n._properties.platform)) CONTAINS toLower($company_name)
 RETURN
-    n.name AS platform,
+    n._properties.platform AS platform,
     n.text AS clause_text
 LIMIT 50
 """
@@ -143,7 +144,7 @@ async def graph_node(state: AuditState) -> AuditState:
     Traverses the four-hop chain:
     ``Platform → Document → Revision → Clause``
 
-    If Neo4j is unavailable or unpopulated, falls back to vector search.
+    If Neo4j is unavailable or unpopulated, returns empty passages.
 
     Parameters
     ----------
@@ -182,17 +183,27 @@ async def graph_node(state: AuditState) -> AuditState:
                 except Exception as e:
                     logger.debug("Debug label query failed: %s", e)
                 
-                # Pattern 1: Match nodes with text containing company name
+                # Pattern 1: Match Chunk nodes via _properties.platform field (PropertyGraphStore schema)
                 try:
-                    result = await session.run(_CYPHER_TEMPLATE, company_name=company_name)
+                    result = await session.run(_CYPHER_BY_PROPS_TEMPLATE, company_name=company_name)
                     records = await result.data()
                     if records:
-                        logger.info("Graph query matched via text search - found %d records", len(records))
-                        logger.info("DEBUG: Sample record keys: %s", list(records[0].keys()) if records else "none")
+                        logger.info("Graph query matched via _properties.platform - found %d records", len(records))
                 except Exception as e:
-                    logger.debug("Pattern 1 failed: %s", e)
+                    logger.debug("Pattern 1 (_properties) failed: %s", e)
                 
-                # Pattern 2: Document nodes with category field (seed data format)
+                # Pattern 2: Match nodes with text containing company name
+                if not records:
+                    try:
+                        result = await session.run(_CYPHER_TEMPLATE, company_name=company_name)
+                        records = await result.data()
+                        if records:
+                            logger.info("Graph query matched via text search - found %d records", len(records))
+                            logger.info("DEBUG: Sample record keys: %s", list(records[0].keys()) if records else "none")
+                    except Exception as e:
+                        logger.debug("Pattern 2 (text search) failed: %s", e)
+                
+                # Pattern 3: Document nodes with category field (seed data format)
                 if not records:
                     try:
                         result = await session.run(
@@ -202,9 +213,9 @@ async def graph_node(state: AuditState) -> AuditState:
                         if records:
                             logger.info("Graph query matched via Document nodes")
                     except Exception as e:
-                        logger.debug("Pattern 2 failed: %s", e)
+                        logger.debug("Pattern 3 (Document) failed: %s", e)
                 
-                # Pattern 3: Full path traversal (Platform -> Document -> Revision -> Clause)
+                # Pattern 4: Full path traversal (Platform -> Document -> Revision -> Clause)
                 if not records:
                     try:
                         result = await session.run(
@@ -214,9 +225,9 @@ async def graph_node(state: AuditState) -> AuditState:
                         if records:
                             logger.info("Graph query matched via full path traversal")
                     except Exception as e:
-                        logger.debug("Pattern 3 failed: %s", e)
+                        logger.debug("Pattern 4 (full path) failed: %s", e)
                 
-                # Pattern 4: Match by Platform name
+                # Pattern 5: Match by Platform name
                 if not records:
                     try:
                         result = await session.run(
@@ -226,9 +237,9 @@ async def graph_node(state: AuditState) -> AuditState:
                         if records:
                             logger.info("Graph query matched via Platform name")
                     except Exception as e:
-                        logger.debug("Pattern 4 failed: %s", e)
+                        logger.debug("Pattern 5 (Platform name) failed: %s", e)
                 
-                # Pattern 5: Fallback - any node with text
+                # Pattern 6: Fallback - any node with text
                 if not records:
                     try:
                         result = await session.run(
@@ -238,7 +249,7 @@ async def graph_node(state: AuditState) -> AuditState:
                         if records:
                             logger.info("Graph query matched via fallback")
                     except Exception as e:
-                        logger.debug("Pattern 5 failed: %s", e)
+                        logger.debug("Pattern 6 (fallback) failed: %s", e)
 
         for rec in records:
             clause_text = rec.get("clause_text", "") or rec.get("text", "")
@@ -264,16 +275,9 @@ async def graph_node(state: AuditState) -> AuditState:
             "Graph node error: %s — attempting vector fallback.", exc
         )
 
-    # Fallback: Use vector search when Neo4j is unavailable or empty
     logger.info(
-        "Graph search returned no results for '%s' — falling back to vector search.",
+        "Graph search returned no results for '%s' — no passages retrieved.",
         company_name,
     )
-    
-    try:
-        from workflow.nodes.vector_node import vector_node
-        fallback_state = await vector_node(state)
-        return fallback_state
-    except Exception as fallback_exc:
-        logger.error("Vector fallback also failed: %s", fallback_exc)
-        return {**state, "retrieved_passages": []}
+
+    return {**state, "retrieved_passages": []}

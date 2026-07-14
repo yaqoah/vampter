@@ -95,28 +95,60 @@ async def get_quick_select_platforms() -> list[dict]:
         auth = (settings.neo4j_user, settings.neo4j_password.get_secret_value())
         async with AsyncGraphDatabase.driver(settings.neo4j_uri, auth=auth) as driver:
             async with driver.session() as session:
-                # Check for nodes with text content (LlamaIndex format)
+                # Check for Chunk nodes (LlamaIndex PropertyGraphStore default label)
+                # These are created by the full ingestion pipeline
                 cypher_query = """
-                MATCH (n) WHERE n.text IS NOT NULL
-                RETURN DISTINCT n.name AS name
-                ORDER BY n.name
-                LIMIT 100
+                MATCH (c:Chunk) WHERE c.text IS NOT NULL
+                RETURN DISTINCT c.text AS text
+                LIMIT 1
                 """
                 result = await session.run(cypher_query)
-                records = await result.data()
+                chunk_check = await result.single()
                 
-                if records:
-                    platforms = [{"id": rec.get("name", ""), "name": rec.get("name", "")} for rec in records]
-                    return platforms
+                if chunk_check:
+                    # Query for platforms from Chunk nodes via _properties metadata
+                    # PropertyGraphStore stores platform in _properties JSON field
+                    cypher_platforms = """
+                    MATCH (c:Chunk) WHERE c._properties IS NOT NULL
+                    UNWIND keys(c._properties) AS key
+                    WITH key, c._properties AS props
+                    WHERE key = 'platform' AND size(props[key]) > 0
+                    RETURN DISTINCT props[key] AS platform
+                    ORDER BY platform
+                    LIMIT 100
+                    """
+                    result = await session.run(cypher_platforms)
+                    records = await result.data()
+                    
+                    if records:
+                        platforms = [{"id": rec.get("platform", ""), "name": rec.get("platform", "")} for rec in records]
+                        return platforms
+                    
+                    # Alternative: extract platform from text content using regex-like filtering
+                    # Get unique platforms from _properties that contain meaningful data
+                    cypher_alt = """
+                    MATCH (c:Chunk) WHERE c._properties IS NOT NULL
+                    RETURN DISTINCT c._properties AS props
+                    LIMIT 50
+                    """
+                    result = await session.run(cypher_alt)
+                    records = await result.data()
+                    
+                    platforms = []
+                    for rec in records:
+                        props = rec.get("props", {})
+                        if isinstance(props, dict) and "platform" in props:
+                            platform = props.get("platform", "")
+                            if platform:
+                                platforms.append({"id": platform, "name": platform})
+                    
+                    if platforms:
+                        return platforms
                 
-                # Fallback: check Platform nodes (seed data format)
-                result = await session.run(
-                    "MATCH (p:Platform) RETURN p.id AS id, p.name AS name ORDER BY p.id"
-                )
-                records = await result.data()
-                if records:
-                    platforms = [{"id": rec.get("id", ""), "name": rec.get("name", rec.get("id", ""))} for rec in records]
-                    return platforms
+                # If no Chunk nodes found, don't return seed data platforms
+                # as they have incompatible schema (missing Revision/Clause nodes)
+                logger.info("No platforms with proper Chunk data found in Neo4j")
+                
     except Exception as exc:
         logger.warning("Neo4j unavailable for quick-select: %s", exc)
 

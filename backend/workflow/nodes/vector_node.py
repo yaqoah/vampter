@@ -12,6 +12,9 @@ for the incoming user query.
 This node is invoked when the router classifies the query as ``"vector"``.
 No mock fallback is provided - Qdrant must be available for this node
 to function.
+
+Note: This node no longer has a fallback to graph_node to prevent infinite
+loops. If no passages are retrieved, it returns empty passages.
 """
 
 from __future__ import annotations
@@ -175,12 +178,5 @@ async def vector_node(state: AuditState) -> AuditState:
     except Exception as exc:
         logger.warning("Vector node error: %s — returning empty passages.", exc)
         return {**state, "retrieved_passages": []}
-
-    # If vector search returned no passages, fall back to graph search
-    if not passages:
-        logger.info("Vector node returned no results, falling back to graph_node")
-        # Import here to avoid circular import at module load
-        from workflow.nodes.graph_node import graph_node
-        return await graph_node(state)
 
     return {**state, "retrieved_passages": passages}

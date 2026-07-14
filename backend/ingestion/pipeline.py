@@ -405,6 +405,7 @@ async def run_pipeline(
     max_platforms: Optional[int] = None,
     clear_all: bool = False,
     clear_platform: Optional[str] = None,
+    clear_only: Optional[str] = None,
     resume: bool = False,
     batch_size: int = 50,
 ) -> IngestionResult:
@@ -494,12 +495,18 @@ async def run_pipeline(
                 auth=(settings.neo4j_user, settings.neo4j_password.get_secret_value())
             )
             with driver.session() as session:
+                # Clear all nodes that might reference this platform (Platform, Document, Chunk)
                 session.run(
                     "MATCH (p:Platform {id: $platform_id}) DETACH DELETE p",
                     platform_id=clear_platform.lower()
                 )
                 session.run(
                     "MATCH (d:Document {platform: $platform}) DETACH DELETE d",
+                    platform=clear_platform.lower()
+                )
+                # Also clear Chunk nodes which contain platform metadata in _properties
+                session.run(
+                    "MATCH (c:Chunk) WHERE c._properties.platform = $platform DETACH DELETE c",
                     platform=clear_platform.lower()
                 )
                 logger.info("Cleared platform '%s' from Neo4j", clear_platform)
@@ -509,7 +516,12 @@ async def run_pipeline(
         
         try:
             import qdrant_client
-            qc = qdrant_client.QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+            # Handle Qdrant Cloud vs local
+            if settings.qdrant_url:
+                qc = qdrant_client.QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else None)
+            else:
+                qc = qdrant_client.QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+            
             if qc.collection_exists("vampter_docs"):
                 qc.delete(
                     collection_name="vampter_docs",
@@ -524,9 +536,84 @@ async def run_pipeline(
         except Exception as exc:
             logger.warning("Could not clear platform from Qdrant: %s", exc)
     
-    if clear_all or clear_platform:
-        # Continue without incremental - we just cleared data
-        incremental = False
+    # Handle clear_only - clear and exit without re-ingesting
+    if clear_only:
+        logger.info("Clear-only mode: removing data for platform '%s'...", clear_only)
+        # Clear the specific platform data
+        try:
+            from neo4j import GraphDatabase
+            driver = GraphDatabase.driver(
+                settings.neo4j_uri,
+                auth=(settings.neo4j_user, settings.neo4j_password.get_secret_value())
+            )
+            with driver.session() as session:
+                session.run(
+                    "MATCH (p:Platform {id: $platform_id}) DETACH DELETE p",
+                    platform_id=clear_only.lower()
+                )
+                session.run(
+                    "MATCH (d:Document {platform: $platform}) DETACH DELETE d",
+                    platform=clear_only.lower()
+                )
+                session.run(
+                    "MATCH (c:Chunk) WHERE c._properties.platform = $platform DETACH DELETE c",
+                    platform=clear_only.lower()
+                )
+                logger.info("Cleared platform '%s' from Neo4j", clear_only)
+            driver.close()
+        except Exception as exc:
+            logger.warning("Could not clear platform from Neo4j: %s", exc)
+        
+        try:
+            import qdrant_client
+            if settings.qdrant_url:
+                qc = qdrant_client.QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else None)
+            else:
+                qc = qdrant_client.QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+            
+            if qc.collection_exists("vampter_docs"):
+                try:
+                    qc.delete(
+                        collection_name="vampter_docs",
+                        points_selector=qdrant_client.http.models.Filter(
+                            must=[qdrant_client.http.models.FieldCondition(
+                                key="platform",
+                                match=qdrant_client.http.models.MatchText(text=clear_only.lower())
+                            )]
+                        )
+                    )
+                    logger.info("Cleared platform '%s' from Qdrant by filter", clear_only)
+                except Exception as filter_exc:
+                    # If filter fails due to missing index, try alternative approaches
+                    logger.warning("Filter delete failed, trying payload scan: %s", filter_exc)
+                    
+                    # Alternative: get all points and delete those with matching platform
+                    try:
+                        all_points = qc.scroll(collection_name="vampter_docs", limit=10000)
+                        if all_points and all_points[0]:
+                            ids_to_delete = []
+                            for point in all_points[0]:
+                                payload = point.payload or {}
+                                # Check various possible platform field names
+                                if (payload.get("platform") == clear_only.lower() or 
+                                    payload.get("_node_content", {}).get("platform") == clear_only.lower() or
+                                    any(clear_only.lower() in str(v).lower() for v in payload.values() if isinstance(v, str))):
+                                    ids_to_delete.append(point.id)
+                            
+                            if ids_to_delete:
+                                qc.delete(
+                                    collection_name="vampter_docs",
+                                    points_selector=ids_to_delete
+                                )
+                                logger.info("Cleared %d vectors for platform '%s' from Qdrant", len(ids_to_delete), clear_only)
+                    except Exception as alt_exc:
+                        logger.warning("Could not clear vectors from Qdrant: %s", alt_exc)
+        except Exception as exc:
+            logger.warning("Could not clear platform from Qdrant: %s", exc)
+        
+        result = IngestionResult()
+        result.elapsed_seconds = time.perf_counter() - t_start
+        return result
 
     # ── Step 1: Fetch ──────────────────────────────────────────────────────
     logger.info("=== VAMPTER INGESTION PIPELINE ===")

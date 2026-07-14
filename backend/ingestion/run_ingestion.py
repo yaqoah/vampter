@@ -171,7 +171,12 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--clear-platform",
         metavar="NAME",
-        help="Clear data for specific platform before ingestion (re-process).",
+        help="Clear data for specific platform THEN continue with ingestion (re-process).",
+    )
+    parser.add_argument(
+        "--clear-only",
+        metavar="NAME",
+        help="Clear data for specific platform and exit WITHOUT re-ingesting. Use this to remove seed data cleanly.",
     )
 
     return parser
@@ -201,6 +206,8 @@ async def _main(args: argparse.Namespace) -> int:
     logger.info("  Incremental    : %s", args.incremental)
     logger.info("  Max platforms  : %s", args.max_platforms if args.max_platforms else "all")
     logger.info("  Batch size     : %d", args.batch_size)
+    if args.clear_only:
+        logger.info("  Clear only     : %s (will exit after clearing)", args.clear_only)
     logger.info(_SEP)
 
     try:
@@ -216,7 +223,8 @@ async def _main(args: argparse.Namespace) -> int:
             incremental=args.incremental,
             max_platforms=args.max_platforms,
             clear_all=args.clear_all,
-            clear_platform=args.clear_platform,
+            clear_platform=args.clear_platform if not args.clear_only else None,
+            clear_only=args.clear_only,
             resume=args.resume,
             batch_size=args.batch_size,
         )
@@ -224,7 +232,8 @@ async def _main(args: argparse.Namespace) -> int:
         logger.error("Pipeline raised an unexpected exception: %s", exc, exc_info=True)
         return 2
 
-    if result.documents_loaded == 0:
+    # For clear-only mode, documents_loaded=0 is expected - don't treat as error
+    if result.documents_loaded == 0 and not args.clear_only:
         logger.error(
             "No documents were successfully fetched from URL '%s'.", args.api_url
         )
@@ -232,6 +241,11 @@ async def _main(args: argparse.Namespace) -> int:
             "Ensure the API is reachable and returning a valid JSON list."
         )
         return 1
+    
+    # For clear-only mode, print success message
+    if args.clear_only:
+        logger.info("Successfully cleared platform '%s' from databases.", args.clear_only)
+        return 0
 
     logger.info(_SEP)
     logger.info("  INGESTION SUMMARY")
