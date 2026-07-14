@@ -38,8 +38,9 @@ export function AuditConsole() {
 
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
+      const endpoint = apiUrl ? `${apiUrl}/api/v1/audit` : '/api/v1/audit'
       const res = await fetch(
-        `${apiUrl}/api/v1/audit`,
+        endpoint,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

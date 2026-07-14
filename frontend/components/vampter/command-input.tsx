@@ -55,7 +55,8 @@ export function CommandInput({ onExecute }: CommandInputProps) {
     async function fetchPlatforms() {
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
-        const res = await fetch(`${apiUrl}/api/v1/platforms`)
+        const endpoint = apiUrl ? `${apiUrl}/api/v1/platforms` : '/api/v1/platforms'
+        const res = await fetch(endpoint)
         if (res.ok) {
           const data = await res.json()
           if (active) {
@@ -83,7 +84,8 @@ export function CommandInput({ onExecute }: CommandInputProps) {
     async function fetchQuickSelect() {
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
-        const res = await fetch(`${apiUrl}/api/v1/platforms/quick-select`)
+        const endpoint = apiUrl ? `${apiUrl}/api/v1/platforms/quick-select` : '/api/v1/platforms/quick-select'
+        const res = await fetch(endpoint)
         if (res.ok) {
           const data = await res.json()
           if (active) {
@@ -123,7 +125,8 @@ export function CommandInput({ onExecute }: CommandInputProps) {
     setSearchLoading(true)
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
-      const res = await fetch(`${apiUrl}/api/v1/platforms/search?q=${encodeURIComponent(query)}`)
+      const endpoint = apiUrl ? `${apiUrl}/api/v1/platforms/search?q=${encodeURIComponent(query)}` : `/api/v1/platforms/search?q=${encodeURIComponent(query)}`
+      const res = await fetch(endpoint)
       if (res.ok) {
         const data = await res.json()
         setFiltered(data || [])
