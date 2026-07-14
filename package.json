@@ -1,0 +1,7 @@
+{
+  "name": "vampter",
+  "private": true,
+  "scripts": {
+    "dev": "node dev-script.js"
+  }
+}

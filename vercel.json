@@ -6,7 +6,8 @@
       "use": "@vercel/python",
       "config": {
         "maxDuration": 300,
-        "runtime": "python@3.12"
+        "runtime": "python@3.12",
+        "includeFiles": ["backend/**/*"]
       }
     },
     {
