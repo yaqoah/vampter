@@ -2,11 +2,8 @@
   "version": 2,
   "builds": [
     {
-      "src": "package.json",
-      "use": "@vercel/next",
-      "config": {
-        "rootDir": "frontend"
-      }
+      "src": "frontend/package.json",
+      "use": "@vercel/next"
     },
     {
       "src": "backend/main.py",
@@ -14,11 +11,7 @@
       "config": {
         "rootDir": "backend",
         "maxDuration": 300,
-        "includeFiles": [
-          "backend/**/*.py",
-          "backend/**/*.toml",
-          "backend/requirements.txt"
-        ]
+        "includeFiles": ["**/*.py", "**/*.toml", "requirements.txt"]
       }
     }
   ],
