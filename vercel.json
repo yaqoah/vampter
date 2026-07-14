@@ -9,8 +9,14 @@
       }
     },
     {
-      "src": "backend/app/main.py",
-      "use": "@vercel/python"
+      "src": "backend/main.py",
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": [
+          "backend/**/*.py",
+          "backend/**/*.toml"
+        ]
+      }
     }
   ],
   "routes": [
@@ -19,11 +25,11 @@
     },
     {
       "src": "/api/(.*)",
-      "dest": "/backend/app/main.py"
+      "dest": "/backend/main.py"
     }
   ],
   "functions": {
-    "backend/app/main.py": {
+    "backend/main.py": {
       "maxDuration": 300
     }
   }
