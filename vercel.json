@@ -13,6 +13,7 @@
       "use": "@vercel/python",
       "config": {
         "rootDir": "backend",
+        "maxDuration": 300,
         "includeFiles": [
           "backend/**/*.py",
           "backend/**/*.toml",
@@ -29,10 +30,5 @@
       "src": "/api/(.*)",
       "dest": "/backend/main.py"
     }
-  ],
-  "functions": {
-    "backend/main.py": {
-      "maxDuration": 300
-    }
-  }
+  ]
 }
