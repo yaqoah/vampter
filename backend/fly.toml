@@ -1,0 +1,28 @@
+# Fly.io app configuration for Vampter Backend
+
+app = "vampter-backend"
+primary_region = "iad"  # Washington, DC - same as your Vercel region
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # These will be set via `fly secrets` but can add defaults here
+  # REDIS_DISABLED = "true"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  max_concurrency = 25
+
+[[vm]]
+  memory = "1gb"  # Start with 1GB, increase if needed
+  cpu_kind = "shared"
+  cpus = 1
+
+[mounts]
+  source = "vampter_data"
+  destination = "/data"
