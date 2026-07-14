@@ -28,39 +28,51 @@ logger = logging.getLogger(__name__)
 # Sample policy data for testing - matching exact Cypher schema
 SAMPLE_POLICIES = [
     {
-        "platform": "netflix",
+        "platform": "chatgpt",
         "document": "privacy-policy",
         "revision": "2024-01",
         "clauses": [
-            {"text": "Netflix collects personal information including name, email, payment information, and viewing activity.", "category": "Data Collection"},
-            {"text": "Information is used to personalize recommendations, process payments, and improve services.", "category": "Data Usage"},
-            {"text": "Netflix shares data with third-party partners for content delivery and analytics.", "category": "Third-Party Sharing"},
-            {"text": "Users can access, correct, or delete their personal information through account settings.", "category": "User Rights"},
-            {"text": "Netflix implements industry-standard security measures to protect user data.", "category": "Security Measures"},
+            {"text": "ChatGPT collects user conversations, account information, and usage data to improve the service.", "category": "Data Collection"},
+            {"text": "Conversations may be reviewed by AI trainers to enhance model performance.", "category": "Data Usage"},
+            {"text": "Data is shared with service providers and for legal compliance when required.", "category": "Third-Party Sharing"},
+            {"text": "Users can access and delete their conversation history through account settings.", "category": "User Rights"},
+            {"text": "End-to-end encryption is applied to protect sensitive user data.", "category": "Security Measures"},
         ]
     },
     {
-        "platform": "spotify",
+        "platform": "grok",
         "document": "privacy-policy",
         "revision": "2024-01",
         "clauses": [
-            {"text": "Spotify collects account information including name, email, phone number, and profile information.", "category": "Data Collection"},
-            {"text": "Collection of listening history, playlists, and interaction data for service improvement.", "category": "Usage Tracking"},
-            {"text": "Spotify uses cookies to improve user experience and advertising targeting.", "category": "Tracking & Cookies"},
-            {"text": "Integration with social media platforms and advertising partners for data sharing.", "category": "Third-Party Integration"},
-            {"text": "Account data is retained until deletion request is processed, subject to legal requirements.", "category": "Data Retention"},
+            {"text": "Grok collects interaction data, prompts, and model responses during usage.", "category": "Data Collection"},
+            {"text": "User data is used to improve model accuracy and personalize responses.", "category": "Data Usage"},
+            {"text": "Information is shared with trusted partners for service provision and analytics.", "category": "Third-Party Sharing"},
+            {"text": "Account deletion requests are processed within 30 days of submission.", "category": "User Rights"},
+            {"text": "Strong encryption and access controls protect user information.", "category": "Security Measures"},
         ]
     },
     {
-        "platform": "openai",
+        "platform": "tiktok",
         "document": "privacy-policy",
         "revision": "2024-01",
         "clauses": [
-            {"text": "OpenAI collects information from API usage, website interactions, and support contacts.", "category": "Data Collection"},
-            {"text": "Content may be used to improve models unless opted out via ChatGPT settings.", "category": "Training Data"},
-            {"text": "Limited sharing with service providers and for legal compliance purposes.", "category": "Third-Party Sharing"},
-            {"text": "Users can access, correct, or delete their data through privacy portal.", "category": "User Rights"},
-            {"text": "Encryption and access controls protect user information in transit and at rest.", "category": "Security"},
+            {"text": "TikTok collects device information, browsing history, location data, and content interactions.", "category": "Data Collection"},
+            {"text": "Data is used to personalize content feed and deliver targeted advertising.", "category": "Data Usage"},
+            {"text": "Information is shared with advertising partners and third-party service providers.", "category": "Third-Party Sharing"},
+            {"text": "Users can download their data or request account deletion through settings.", "category": "User Rights"},
+            {"text": "Security measures include encryption and regular security audits.", "category": "Security Measures"},
+        ]
+    },
+    {
+        "platform": "facebook",
+        "document": "privacy-policy",
+        "revision": "2024-01",
+        "clauses": [
+            {"text": "Facebook collects personal information, posts, messages, and interaction data across platforms.", "category": "Data Collection"},
+            {"text": "Data is used to personalize ads, content, and improve service functionality.", "category": "Data Usage"},
+            {"text": "Information is shared with Instagram, WhatsApp, and third-party advertisers.", "category": "Third-Party Sharing"},
+            {"text": "Users can access, download, or delete their data through privacy settings.", "category": "User Rights"},
+            {"text": "Encryption and security controls are implemented across all data storage.", "category": "Security Measures"},
         ]
     },
 ]

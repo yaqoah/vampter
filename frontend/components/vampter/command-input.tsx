@@ -30,6 +30,14 @@ const RADARS = [
   },
 ] as const
 
+// Hardcoded preset platforms for quick select
+const PRESET_PLATFORMS: PlatformOption[] = [
+  { id: 'chatgpt', name: 'ChatGPT' },
+  { id: 'grok', name: 'Grok' },
+  { id: 'tiktok', name: 'Tiktok' },
+  { id: 'facebook', name: 'Facebook' },
+]
+
 interface CommandInputProps {
   onExecute?: (target: string, concern: string, radars: Record<string, boolean>) => void
 }
@@ -197,7 +205,7 @@ export function CommandInput({ onExecute }: CommandInputProps) {
                 }}
                 onFocus={() => setOpen(true)}
                 onBlur={() => setTimeout(() => setOpen(false), 120)}
-                placeholder="e.g. Netflix, Adobe, Tabby…"
+                placeholder="e.g. ChatGPT, Grok, Adobe, Tiktok…"
                 autoComplete="off"
                 className="h-12 w-full rounded-xl border border-border/70 bg-background/60 pl-10 pr-4 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-primary/50 focus:ring-2 focus:ring-ring"
               />
@@ -233,43 +241,52 @@ export function CommandInput({ onExecute }: CommandInputProps) {
               )}
             </div>
 
-            {/* Quick selection from platforms with ingested data */}
-            {!loadingPlatforms && quickSelectPlatforms.length > 0 && (
+            {/* Quick selection from platforms with ingested data (or presets if none) */}
+            {!loadingPlatforms && (
               <div className="flex flex-wrap items-center gap-2">
                 <span className="mr-1 font-mono text-[11px] uppercase tracking-widest text-muted-foreground/80">
                   Quick Select
                 </span>
-                {quickSelectPlatforms.map((platform) => (
-                  <button
-                    key={platform.id}
-                    type="button"
-                    onClick={() => {
-                      setTarget(platform.name)  // Use name for lookup
-                      setOpen(false)
-                      // Do NOT call onExecute here - let user review and click Execute
-                    }}
-                    className={cn(
-                      'group rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all duration-200',
-                      target === platform.name
-                        ? 'border-primary/60 bg-primary/15 text-primary shadow-[0_0_18px_-6px_var(--color-primary)]'
-                        : 'border-border/70 bg-background/40 text-muted-foreground hover:border-primary/40 hover:text-foreground hover:shadow-[0_0_18px_-8px_var(--color-primary)]',
-                    )}
-                  >
-                    {platform.name}
-                  </button>
-                ))}
-              </div>
-            )}
-            {!loadingPlatforms && quickSelectPlatforms.length === 0 && platforms.length > 0 && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground/60">
-                <span className="font-mono uppercase tracking-widest">No pre-seeded platforms</span>
-                <span className="hidden sm:inline"> — run ingestion to populate available platforms</span>
-              </div>
-            )}
-            {!loadingPlatforms && platforms.length === 0 && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground/60">
-                <span className="font-mono uppercase tracking-widest">No platforms loaded</span>
-                <span className="hidden sm:inline"> — ensure backend is running</span>
+                {quickSelectPlatforms.length > 0 ? (
+                  quickSelectPlatforms.map((platform) => (
+                    <button
+                      key={platform.id}
+                      type="button"
+                      onClick={() => {
+                        setTarget(platform.name)  // Use name for lookup
+                        setOpen(false)
+                        // Do NOT call onExecute here - let user review and click Execute
+                      }}
+                      className={cn(
+                        'group rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all duration-200',
+                        target === platform.name
+                          ? 'border-primary/60 bg-primary/15 text-primary shadow-[0_0_18px_-6px_var(--color-primary)]'
+                          : 'border-border/70 bg-background/40 text-muted-foreground hover:border-primary/40 hover:text-foreground hover:shadow-[0_0_18px_-8px_var(--color-primary)]',
+                      )}
+                    >
+                      {platform.name}
+                    </button>
+                  ))
+                ) : (
+                  PRESET_PLATFORMS.map((platform) => (
+                    <button
+                      key={platform.id}
+                      type="button"
+                      onClick={() => {
+                        setTarget(platform.name)
+                        setOpen(false)
+                      }}
+                      className={cn(
+                        'group rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all duration-200',
+                        target === platform.name
+                          ? 'border-primary/60 bg-primary/15 text-primary shadow-[0_0_18px_-6px_var(--color-primary)]'
+                          : 'border-border/70 bg-background/40 text-muted-foreground hover:border-primary/40 hover:text-foreground hover:shadow-[0_0_18px_-8px_var(--color-primary)]',
+                      )}
+                    >
+                      {platform.name}
+                    </button>
+                  ))
+                )}
               </div>
             )}
           </div>
