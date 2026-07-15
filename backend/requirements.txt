@@ -10,13 +10,10 @@ httpx==0.27.2
 
 # LlamaIndex & Connectors
 # Note: Using llama-index core with cloud embeddings for Render Free Tier optimization
-# Core llama-index (includes vector stores, graph stores, embeddings)
+# Core llama-index with Qdrant, Neo4j, and Mistral embeddings integrations
 llama-index==0.10.50
-# Vector store for Qdrant - version 0.2.12 confirmed working in local environment
 llama-index-vector-stores-qdrant==0.2.12
-# Graph store for Neo4j
 llama-index-graph-stores-neo4j==0.2.3
-# Embeddings for Mistral AI
 llama-index-embeddings-mistralai==0.3.0
 
 # Neo4j Python Driver (for schema migration)
