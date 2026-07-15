@@ -40,6 +40,10 @@ def truncate_to_token_limit(
     Uses a lightweight token counting approach (gpt-2/llama tokenizer
     approximation) to avoid downloading model-specific tokenizers.
 
+    Truncates from the middle to preserve both early and late information,
+    which is important for policy documents where key details may appear
+    throughout.
+
     Parameters
     ----------
     text:
@@ -63,18 +67,25 @@ def truncate_to_token_limit(
         if len(tokens) <= max_tokens:
             return text
         
-        # Truncate to token limit
-        truncated_tokens = tokens[:max_tokens]
-        truncated_text = enc.decode(truncated_tokens)
+        # Truncate from the middle to preserve both beginnings and ends
+        # This helps retain key details that may appear throughout policy docs
+        keep_tokens = max_tokens
+        head_tokens = keep_tokens // 2
+        tail_tokens = keep_tokens - head_tokens
         
-        # Add ellipsis to indicate truncation
-        return truncated_text + "\n... [truncated for token limit]"
+        head_text = enc.decode(tokens[:head_tokens])
+        tail_text = enc.decode(tokens[-tail_tokens:])
+        
+        return f"{head_text}\n\n...[content truncated]...\n\n{tail_text}"
     except Exception:
         # Fallback: rough character-based truncation if tokenizer fails
         max_chars = max_tokens * 4  # Rough approximation
         if len(text) <= max_chars:
             return text
-        return text[:max_chars] + "\n... [truncated]"
+        # Also truncate from middle for fallback
+        head_chars = max_chars // 2
+        tail_chars = max_chars - head_chars
+        return text[:head_chars] + "\n\n...[truncated]...\n\n" + text[-tail_chars:]
 
 
 async def compress_node(state: AuditState) -> AuditState:
