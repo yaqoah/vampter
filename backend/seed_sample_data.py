@@ -79,14 +79,14 @@ SAMPLE_POLICIES = [
 
 
 def configure_embedding_model():
-    """Configure local embedding model."""
+    """Configure Mistral cloud embedding model."""
     try:
-        from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-        embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
+        from llama_index.embeddings.mistralai import MistralAIEmbedding
+        embed_model = MistralAIEmbedding(model_name="mistral-embed")
         LlamaSettings.embed_model = embed_model
-        logger.info("Embedding model configured: BAAI/bge-small-en-v1.5")
+        logger.info("Embedding model configured: MistralAIEmbedding(mistral-embed)")
     except ImportError:
-        raise RuntimeError("Install 'llama-index-embeddings-huggingface' for embeddings")
+        raise RuntimeError("Install 'llama-index-embeddings-mistralai' for embeddings")
 
 
 async def seed_neo4j_directly():

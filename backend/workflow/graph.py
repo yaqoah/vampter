@@ -18,7 +18,7 @@ Execution DAG
                         (both paths merge here)
                                  │
                                  ▼
-                          compress_node    (LLMLingua boilerplate removal)
+                          compress_node    (lightweight tiktoken truncation)
                                  │
                                  ▼
                           generate_node   (Poolside AI → AuditReport)

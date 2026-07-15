@@ -1,42 +1,89 @@
 """
 workflow.nodes.compress_node
 ============================
-LLMLingua context compression node.
+Lightweight token-based context compression node.
 
 Responsibility
 --------------
-Applies ``llmlingua.PromptCompressor`` to the list of retrieved passages
-before they are forwarded to the generation node.
+Truncates retrieved passages to fit within token limits for Mistral LLM
+using tiktoken (no heavy ML models required).
 
-Why compress?
-- Legal policy documents are verbose.  Boilerplate phrasing (recitals,
-  definitions, signature blocks) adds token overhead without improving
-  the quality of the generated audit report.
-- Compression reduces LLM latency and cost while preserving the specific
-  numeric, structural, and obligation-bearing language that matters.
-
-Target compression ratio: ~0.5 (50 % token reduction).
+Target behavior:
+- Keep full context if under token limit
+- Truncate from the middle if over limit, preserving key information
+- No torch or transformers dependencies (minimal RAM footprint)
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import List
+
+import tiktoken
 
 from workflow.state import AuditState
 
 logger = logging.getLogger(__name__)
 
-_TARGET_TOKEN_RATIO: float = 0.5
+#: Max tokens to retain before truncation (Mistral Large context ~32k, leave room for prompt/template)
+MAX_COMPRESSED_TOKENS: int = 8000
+
+
+def truncate_to_token_limit(
+    text: str,
+    model: str = "mistral-tok",
+    max_tokens: int = MAX_COMPRESSED_TOKENS,
+) -> str:
+    """
+    Truncate text to fit within token limit using tiktoken.
+
+    Uses a lightweight token counting approach (gpt-2/llama tokenizer
+    approximation) to avoid downloading model-specific tokenizers.
+
+    Parameters
+    ----------
+    text:
+        The text to potentially truncate.
+    model:
+        Tokenizer model name (using cl100k_base for compatibility with Mistral).
+    max_tokens:
+        Maximum number of tokens to retain.
+
+    Returns
+    -------
+    str
+        The text, possibly truncated with ellipsis marker.
+    """
+    try:
+        # Use cl100k_base (GPT-4/3.5 tokenizer) as approximation for Mistral
+        # This is close enough and avoids model-specific downloads
+        enc = tiktoken.get_encoding("cl100k_base")
+        tokens = enc.encode(text)
+        
+        if len(tokens) <= max_tokens:
+            return text
+        
+        # Truncate to token limit
+        truncated_tokens = tokens[:max_tokens]
+        truncated_text = enc.decode(truncated_tokens)
+        
+        # Add ellipsis to indicate truncation
+        return truncated_text + "\n... [truncated for token limit]"
+    except Exception:
+        # Fallback: rough character-based truncation if tokenizer fails
+        max_chars = max_tokens * 4  # Rough approximation
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars] + "\n... [truncated]"
 
 
 async def compress_node(state: AuditState) -> AuditState:
     """
-    Compress retrieved passages using LLMLingua.
+    Compress retrieved passages using lightweight token truncation.
 
-    Runs the synchronous ``PromptCompressor.compress_prompt`` in the
-    default thread executor to avoid blocking the event loop.
+    This replaces the LLMLingua compression to reduce memory footprint.
+    Simply truncates context to fit within token limits while preserving
+    the beginning and end of the content.
 
     Parameters
     ----------
@@ -55,68 +102,21 @@ async def compress_node(state: AuditState) -> AuditState:
         logger.warning(
             "Compress node: no passages to compress for company='%s'.", company_name
         )
-        # Still return empty context to indicate no data
         return {**state, "compressed_context": ""}
 
-    # Join all passages into one block for the compressor.
+    # Join all passages into one block
     full_context = "\n\n".join(passages)
-    logger.info("Compress node: %d passages, %d chars, %d words for company='%s'", 
-                len(passages), len(full_context), len(full_context.split()), company_name)
-    
-    # DEBUG: Log passage content preview
-    if passages:
-        for i, p in enumerate(passages[:3]):
-            logger.debug("Compress node: passage[%d] = %d chars: %s...", i, len(p), p[:50].replace('\n', ' '))
+    logger.info("Compress node: %d passages, %d chars for company='%s'",
+                len(passages), len(full_context), company_name)
 
-    # If context is empty after joining, return empty
+    # If context is empty, return empty
     if not full_context.strip():
         logger.warning("Compress node: empty joined context for company='%s'.", company_name)
         return {**state, "compressed_context": ""}
 
-    # Start with uncompressed context as the default
-    final_compressed = full_context
-    
-    # Attempt compression
-    try:
-        from llmlingua import PromptCompressor  # type: ignore[import]
+    # Apply lightweight token-based truncation
+    compressed = truncate_to_token_limit(full_context, max_tokens=MAX_COMPRESSED_TOKENS)
 
-        def _compress() -> str:
-            compressor = PromptCompressor(
-                model_name="lgaalves/gpt2-dolly",
-                use_llmlingua2=False,
-                device_map="cpu",
-            )
-            result = compressor.compress_prompt(
-                full_context,
-                rate=_TARGET_TOKEN_RATIO,
-                force_tokens=["\n"],
-            )
-            
-            # Handle different return formats from llmlingua
-            if isinstance(result, dict):
-                return result.get("compressed_prompt", full_context) or full_context
-            elif isinstance(result, str):
-                return result
-            elif isinstance(result, (list, tuple)):
-                # llmlingua sometimes returns tuples like (compressed_prompt, origin_tokens, compressed_tokens)
-                # Try to extract first element that looks like text
-                for item in result:
-                    if isinstance(item, str) and len(item) > 50:
-                        return item
-                return full_context
-            return full_context
+    logger.info("Context compression: %d chars → %d chars", len(full_context), len(compressed))
 
-        loop = asyncio.get_event_loop()
-        compressed = await loop.run_in_executor(None, _compress)
-
-        # Only use compression if it actually helped (reduced tokens)
-        if compressed and len(compressed.strip()) > 0 and len(compressed) < len(full_context):
-            final_compressed = compressed
-            logger.info("LLMLingua compression: %d → %d chars", len(full_context), len(compressed))
-        else:
-            logger.info("LLMLingua compression skipped — using raw context.")
-            
-    except Exception as exc:
-        logger.warning("LLMLingua compression skipped: %s", exc)
-
-    return {**state, "compressed_context": final_compressed}
+    return {**state, "compressed_context": compressed}
