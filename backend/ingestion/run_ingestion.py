@@ -14,13 +14,13 @@ Run from the project root with the virtual environment activated:
 Options
 -------
 --api-url, -a     API endpoint for source documents.
-                  Default: ``https://api.example-ota.org/v1/documents``
+                  Default: ``https://api.opentermsarchive.org/v1``
 
 --storage, -s     Local directory to persist the StorageContext.
                   Default: ``./storage``
 
---embed, -e       Embedding model URI.
-                  Default: ``local:BAAI/bge-small-en-v1.5``
+--embed, -e       Embedding model name.
+                  Default: ``mistral-embed``
 
 --chunk-size      Token budget per chunk (SentenceSplitter).
                   Default: ``512``
@@ -100,9 +100,9 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--embed", "-e",
-        default="local:BAAI/bge-small-en-v1.5",
-        metavar="URI",
-        help="Embedding model URI (e.g. 'local:BAAI/bge-small-en-v1.5').",
+        default="mistral-embed",
+        metavar="MODEL_NAME",
+        help="Embedding model name (e.g. 'mistral-embed').",
     )
     parser.add_argument(
         "--chunk-size",
@@ -215,7 +215,7 @@ async def _main(args: argparse.Namespace) -> int:
             settings=settings,
             api_url=args.api_url,
             storage_dir=args.storage,
-            embed_model_uri=args.embed,
+            embed_model_name=args.embed,
             chunk_size=args.chunk_size,
             chunk_overlap=args.chunk_overlap,
             dry_run=args.dry_run,
