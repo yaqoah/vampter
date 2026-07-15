@@ -40,17 +40,18 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Global LlamaIndex embedding binding
 # ---------------------------------------------------------------------------
-# Explicitly configure the global LlamaIndex Settings singleton to use the
-# local BAAI/bge-small-en-v1.5 HuggingFace model.  This MUST run before any
-# node, cache, or graph module is imported so that LlamaSettings.embed_model
-# is always populated — preventing any fallback to the OpenAI embedding API.
+# Configure the global LlamaIndex Settings singleton to use Mistral cloud embeddings.
+# This MUST run before any node, cache, or graph module is imported so that
+# LlamaSettings.embed_model is always populated.
 
 from llama_index.core import Settings as LlamaSettings                  # noqa: E402
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding     # noqa: E402
+from llama_index.embeddings.mistralai import MistralAIEmbedding           # noqa: E402
 
-LlamaSettings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
+# Use Mistral embed model (cloud API, no local model download required)
+# The API key is read from MISTRAL_API_KEY environment variable
+LlamaSettings.embed_model = MistralAIEmbedding(model_name="mistral-embed")
 logger.info(
-    "LlamaIndex global embed_model set → HuggingFaceEmbedding(BAAI/bge-small-en-v1.5)"
+    "LlamaIndex global embed_model set → MistralAIEmbedding(mistral-embed)"
 )
 
 # ---------------------------------------------------------------------------

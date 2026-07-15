@@ -20,7 +20,7 @@ Orchestration sequence
              ┌──────────────────▼──────────────────┐
              │  2. parse_documents_to_nodes()       │
              │     SentenceSplitter                 │
-             │     + BAAI/bge-small-en-v1.5 embeds  │
+             │     + Mistral cloud embeddings         │
              └──────────────────┬──────────────────┘
                                 │  List[BaseNode]
     ┌───────────────────────────▼─────────────────────────────────┐
@@ -396,7 +396,7 @@ async def run_pipeline(
     *,
     api_url: str = "https://api.example-ota.org/v1/documents",
     storage_dir: str = "storage",
-    embed_model_uri: str = "local:BAAI/bge-small-en-v1.5",
+    embed_model_name: str = "mistral-embed",
     chunk_size: int = 512,
     chunk_overlap: int = 64,
     dry_run: bool = False,
@@ -425,8 +425,8 @@ async def run_pipeline(
     storage_dir:
         Local directory where the ``StorageContext`` will be persisted.
         Relative to the current working directory.
-    embed_model_uri:
-        Local embedding model URI accepted by ``resolve_embed_model``.
+    embed_model_name:
+        Mistral embedding model name (default: "mistral-embed").
     chunk_size:
         Token budget per text chunk for the ``SentenceSplitter``.
     chunk_overlap:
@@ -461,11 +461,11 @@ async def run_pipeline(
             if qc.collection_exists("vampter_docs"):
                 qc.delete_collection("vampter_docs")
                 logger.info("Cleared Qdrant collection: vampter_docs")
-            # Recreate collection
+            # Recreate collection with Mistral embedding dimensions (1024)
             qc.create_collection(
                 collection_name="vampter_docs",
                 vectors_config=qdrant_client.http.models.VectorParams(
-                    size=384,
+                    size=1024,
                     distance=qdrant_client.http.models.Distance.COSINE
                 )
             )
@@ -709,7 +709,7 @@ async def run_pipeline(
         documents,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
-        embed_model_uri=embed_model_uri,
+        embed_model_name=embed_model_name,
     )
     result.nodes_parsed = len(nodes)
 
@@ -1004,7 +1004,7 @@ async def ingest_company_on_demand(
                 filtered_docs,
                 chunk_size=512,
                 chunk_overlap=64,
-                embed_model_uri="local:BAAI/bge-small-en-v1.5",
+                embed_model_name="mistral-embed",
             )
             
             # Initialize stores

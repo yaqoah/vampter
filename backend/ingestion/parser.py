@@ -13,15 +13,8 @@ Incoming ``Document`` objects pass through a single-stage ``IngestionPipeline``:
 
 Embedding model selection
 -------------------------
-LlamaIndex 0.10.x ships ``resolve_embed_model`` which accepts a URI
-scheme to locate a local model:
-
-* ``"local:BAAI/bge-small-en-v1.5"``  →  HuggingFace ONNX / PyTorch
-* ``"local:BAAI/bge-base-en-v1.5"``   →  higher accuracy at more RAM
-
-The resolved model is registered on the global ``LlamaSettings``
-singleton so every downstream index call automatically inherits it
-without repetition.
+LlamaIndex 0.10.x uses Mistral cloud embeddings for deployment-friendly
+operation (no local model downloads, minimal RAM footprint).
 """
 
 from __future__ import annotations
@@ -40,9 +33,12 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-#: HuggingFace model used for local dense vector encoding.
-#: BAAI/bge-small-en-v1.5 is compact (134 MB) and ONNX-optimised for speed.
-DEFAULT_EMBED_MODEL_URI: str = "local:BAAI/bge-small-en-v1.5"
+#: Mistral cloud embedding model name.
+#: Uses Mistral AI API for embeddings (no local model download required).
+DEFAULT_EMBED_MODEL_NAME: str = "mistral-embed"
+
+#: Default max context tokens before truncation for prompt compression.
+DEFAULT_MAX_CONTEXT_TOKENS: int = 8000
 
 #: Chunk size in *tokens* for the sentence-level fallback splitter.
 DEFAULT_CHUNK_SIZE: int = 512
@@ -56,69 +52,39 @@ DEFAULT_CHUNK_OVERLAP: int = 64
 
 
 def configure_embedding_model(
-    embed_model_uri: str = DEFAULT_EMBED_MODEL_URI,
+    embed_model_name: str = DEFAULT_EMBED_MODEL_NAME,
 ) -> None:
     """
-    Resolve and globally register a local embedding model.
+    Configure and globally register Mistral cloud embedding model.
 
-    Attempts the following resolution chain in order:
-
-    1. ``llama_index.embeddings.huggingface.HuggingFaceEmbedding``
-       (requires ``llama-index-embeddings-huggingface`` package).
-    2. ``llama_index.embeddings.fastembed.FastEmbedEmbedding``
-       (requires ``llama-index-embeddings-fastembed`` package).
+    Uses the Mistral AI embedding API with the model name.
+    The MISTRAL_API_KEY environment variable must be set.
 
     The resolved model is registered on ``llama_index.core.Settings``
     so every downstream index call inherits it automatically.
 
     Parameters
     ----------
-    embed_model_uri:
-        Accepted as-is for HuggingFace (used as ``model_name`` after
-        stripping the ``"local:"`` prefix).
+    embed_model_name:
+        The Mistral embedding model to use (default: "mistral-embed").
 
     Raises
     ------
     RuntimeError
-        If no embedding model is available. Install one of the required
-        packages for real semantic search.
+        If the Mistral AI embedding package is not available or API key missing.
     """
-    # Strip the "local:" scheme prefix to get the raw model name.
-    model_name = embed_model_uri.removeprefix("local:")
-
-    # ── Attempt 1: HuggingFaceEmbedding ────────────────────────────────────
     try:
-        from llama_index.embeddings.huggingface import HuggingFaceEmbedding  # type: ignore[import]
-        embed_model = HuggingFaceEmbedding(model_name=model_name)
+        from llama_index.embeddings.mistralai import MistralAIEmbedding
+        embed_model = MistralAIEmbedding(model_name=embed_model_name)
         LlamaSettings.embed_model = embed_model
         logger.info(
-            "Embedding model: HuggingFaceEmbedding  model='%s'", model_name
+            "Embedding model: MistralAIEmbedding  model='%s'", embed_model_name
         )
-        return
     except ImportError:
-        logger.debug(
-            "llama-index-embeddings-huggingface not available, trying FastEmbed ..."
+        raise RuntimeError(
+            "llama-index-embeddings-mistralai not available. "
+            "Install it with: pip install llama-index-embeddings-mistralai"
         )
-
-    # ── Attempt 2: FastEmbedEmbedding ───────────────────────────────────────
-    try:
-        from llama_index.embeddings.fastembed import FastEmbedEmbedding  # type: ignore[import]
-        embed_model = FastEmbedEmbedding(model_name=model_name)
-        LlamaSettings.embed_model = embed_model
-        logger.info(
-            "Embedding model: FastEmbedEmbedding  model='%s'", model_name
-        )
-        return
-    except ImportError:
-        logger.debug(
-            "llama-index-embeddings-fastembed not available either."
-        )
-
-    # ── No embedding model available ───────────────────────────────────────
-    raise RuntimeError(
-        "No embedding model available. Install 'llama-index-embeddings-huggingface' "
-        "or 'llama-index-embeddings-fastembed' for semantic search."
-    )
 
 
 def build_node_pipeline(
@@ -168,13 +134,13 @@ async def parse_documents_to_nodes(
     *,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
-    embed_model_uri: str = DEFAULT_EMBED_MODEL_URI,
+    embed_model_name: str = DEFAULT_EMBED_MODEL_NAME,
 ) -> List[BaseNode]:
     """
     High-level async wrapper: configure embeddings then run the node pipeline.
 
     This function:
-    1. Resolves and globally registers the embedding model.
+    1. Configures and globally registers the embedding model.
     2. Runs the single-stage ``IngestionPipeline`` on all supplied documents.
     3. Returns the flat list of parsed ``BaseNode`` objects, ready for
        dual-store indexing.
@@ -187,15 +153,15 @@ async def parse_documents_to_nodes(
         Forwarded to ``build_node_pipeline``.
     chunk_overlap:
         Forwarded to ``build_node_pipeline``.
-    embed_model_uri:
-        Forwarded to ``configure_embedding_model``.
+    embed_model_name:
+        The Mistral embedding model to use (default: "mistral-embed").
 
     Returns
     -------
     List[BaseNode]
         Flat sequence of all parsed and enriched nodes.
     """
-    configure_embedding_model(embed_model_uri)
+    configure_embedding_model(embed_model_name)
     pipeline = build_node_pipeline(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
     logger.info("Running IngestionPipeline on %d document(s) …", len(documents))

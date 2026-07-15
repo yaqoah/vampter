@@ -152,7 +152,7 @@ export function CommandInput({ onExecute }: CommandInputProps) {
   const handleInputChange = (value: string) => {
     setTarget(value)
     setOpen(true)
-    
+
     // Debounce the search to avoid excessive API calls
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current)

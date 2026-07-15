@@ -153,7 +153,7 @@ class AuditReport(BaseModel):
     )
     compressed_token_count: Optional[int] = Field(
         default=None,
-        description="Token count after LLMLingua compression",
+        description="Token count after lightweight tiktoken truncation",
     )
 
     # Alias fields for frontend compatibility - populated by model_validator
